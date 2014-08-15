@@ -393,6 +393,19 @@ class PhobosObjectPanel(bpy.types.Panel):
             #    bpy.context.active_object[prop] = defs.type_properties[bpy.context.active_object.MARStype+"_default"]
 
 
+class Pose_Serial_Panel(bpy.types.Panel):
+	"""
+	"""
+	#bl_idname = 'OBJECT_PT_storepose'
+	bl_label = 'Manipulate all armatures'
+	bl_space_type = 'PROPERTIES'
+	bl_region_type = 'WINDOW'
+	bl_context = 'data'
+	
+	def draw(self, context):
+		self.layout.operator('object.mt_store_armas_pose', text='Store all armature poses')
+		self.layout.operator('object.mt_load_armas_pose', text='Load all armature poses')
+
 
 # class PhobosWorldPanel(bpy.types.Panel):
 #     bl_idname = "WORLD_PT_Phobos"

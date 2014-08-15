@@ -136,5 +136,7 @@ layerTypes = {
               }
 
 MARSlegacydict = {'specularColor': 'specularFront',
-                  'diffuseColor': 'diffuseFront'
+                  'diffuseColor': 'diffuseFront',
+                  'ambientColor': 'ambientFront',
+                  'emissionColor': 'emissionFront'
                   }

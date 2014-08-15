@@ -54,6 +54,11 @@ def cleanUpScene():
     for lamp in bpy.data.lamps:
         bpy.data.lamps.remove(lamp)
 
+def round_float(float_as_str, decimal=6):
+    '''
+    does not seem to work right for some reason
+    '''
+    return round(float(float_as_str), decimal)
 
 class RobotModelParser():
     """Base class for a robot model file parser of a specific type"""
@@ -259,10 +264,357 @@ class MARSModelParser(RobotModelParser):
     """Class derived from RobotModelParser which parses a MARS scene"""
 
     def __init__(self, filepath):
-        RobotModelParser.__init__(filepath)
+        RobotModelParser.__init__(self, filepath)
+        
+        self.xml_tree = None
+        self.link_index_dict = {}
+        self.link_groups = {}
+        self.material_indices = {}
+        self.link_indices = set([])
+        self.vis_coll_groups = {}
+        self.base_poses = {}
 
     def parseModel(self):
-        print("Parsing MARS scene...")
+        '''
+        '''
+        print("\nParsing MARS scene from", self.filepath)
+        self.tree = ET.parse(self.filepath)
+        root = self.tree.getroot()
+        
+        # robot name is not included in MARS scenes, right?
+        
+        nodes = root.find('nodelist')
+        joints = root.find('jointlist')
+        sensors = root.find('sensorlist')
+        motors = root.find('motorlist')
+        controllers = root.find('controllerlist')
+        materials = root.find('materiallist')
+        
+        self._apply_relative_ids(nodes)
+        self._get_links(nodes, joints)
+        self._parse_materials(materials)
+        
+        self.robot['links'] = self._parse_links(nodes)
+        self.robot['joints'] = self._parse_joints(joints)
+        self.robot['sensors'] = self._parse_sensors(sensors)
+        #self.robot['motors'] = self._parse_motors(motors)
+        #self.robot['controllers'] = self._parse_controllers(controllers)
+        self.robot['groups'] = self.link_groups
+        self._parse_additional_visuals_and_collisions(self.robot, nodes)
+        
+        with open(self.filepath+'_debug.yml', 'w') as outputfile:
+            outputfile.write(yaml.dump(self.robot))
+            
+        print(self.filepath+'_debug.yml')
+        
+    def _get_pose(self, node):
+        '''
+        '''
+        position = node.find('position')
+        px = round_float(position.find('x').text)
+        py = round_float(position.find('y').text)
+        pz = round_float(position.find('z').text)
+        rotation = node.find('rotation')
+        rw = round_float(rotation.find('w').text)
+        rx = round_float(rotation.find('x').text)
+        ry = round_float(rotation.find('y').text)
+        rz = round_float(rotation.find('z').text)
+        return [px, py, pz, rw, rx, ry, rz]
+    
+    def _get_links(self, nodes, joints):
+        '''
+        '''
+        for joint in joints:
+            parent = int(joint.find('nodeindex1').text)
+            self.link_indices.update([parent])
+            child = int(joint.find('nodeindex2').text)
+            self.link_indices.update([child])
+        
+    def _parse_materials(self, materials):
+        '''
+        Parse the materials from the MARS scene.
+        '''
+        for material in materials:
+            material_dict = {}
+            mat_id = int(material.find('id').text)
+            
+            # check needs to be explicit for future versions
+            if material.find('name') is not None:
+                name = material.find('name').text
+            else:
+                name = 'material_' + str(mat_id)
+            material_dict['name'] = name
+            
+            for xml_colour in mtdefs.MARSrevlegdict:
+                colour = material.find(xml_colour)
+                if colour is not None:
+                    r = round_float(colour.find('r').text)
+                    g = round_float(colour.find('g').text)
+                    b = round_float(colour.find('b').text)
+                    a = round_float(colour.find('a').text)
+                    py_colour = mtdefs.MARSrevlegdict[xml_colour]
+                    material_dict[py_colour] = [r, g, b, a]
+            
+            transparency = material.find('transparency')
+            if transparency is not None:
+                material_dict['transparency'] = round_float(transparency.text)
+            else:
+                material_dict['transparency'] = 0.0
+                
+            material_dict['shininess'] = round_float(material.find('shininess').text)
+                
+            self.material_indices[mat_id] = material_dict
+    
+    def _parse_geometry(self, node, mode):
+        '''
+        mesh incomplete
+        '''
+        size = None
+        if mode == 'visual':
+            size = node.find('visualsize')
+        elif mode == 'collision':
+            size = node.find('extend')
+        
+        geometry_dict = {}
+        geometry_type = node.find('physicmode').text
+        geometry_dict['geometryType'] = geometry_type
+        
+        if geometry_type == 'box' or geometry_type == 'mesh':
+            x = round_float(size.find('x').text)
+            y = round_float(size.find('y').text)
+            z = round_float(size.find('z').text)
+            geometry_dict['size'] = [x, y, z]
+            if geometry_type == 'mesh':
+                filename = node.find('origname').text
+                geometry_dict['filename'] = filename
+        elif geometry_type == 'sphere' or geometry_type == 'cylinder' or geometry_type == 'capsule':
+            radius = round_float(size.find('x').text) / 2.0
+            geometry_dict['radius'] = radius
+            if geometry_type == 'cylinder' or geometry_type == 'capsule':
+                height = round_float(size.find('z').text)
+                geometry_dict['height'] = height
+        elif geometry_type == 'plane':
+            x = round_float(size.find('x').text)
+            y = round_float(size.find('y').text)
+            geometry_dict['size'] = [x, y]
+        return geometry_dict
+    
+    def _parse_visual(self, visuals_dict, node):
+        '''
+        '''
+        visual_dict = {}
+        name = node.get('name')
+        visual_dict['name'] = name
+        index = int(node.find('index').text)
+        
+        pose = self.base_poses[index]
+        visual_pose = [0.0]*len(pose)
+        visual_position = node.find('visualposition')
+        if visual_position is not None:
+            visual_pose[0] = round_float(visual_position.find('x').text)
+            visual_pose[1] = round_float(visual_position.find('y').text)
+            visual_pose[2] = round_float(visual_position.find('z').text)
+        visual_rotation = node.find('visualrotation')
+        if visual_rotation is not None:
+            visual_pose[3] = round_float(visual_rotation.find('w').text)
+            visual_pose[4] = round_float(visual_rotation.find('x').text)
+            visual_pose[5] = round_float(visual_rotation.find('y').text)
+            visual_pose[6] = round_float(visual_rotation.find('z').text)
+        abs_pose = []
+        for p, vp in zip(pose, visual_pose):
+            abs_pose.append(p+vp)
+        visual_dict['pose'] = abs_pose
+        
+        mat_index = int(node.find('material_id').text)
+        visual_dict['material'] = self.material_indices[mat_index]
+        
+        geometry_dict = self._parse_geometry(node, 'visual')
+        visual_dict['geometry'] = geometry_dict
+        
+        visuals_dict[name] = visual_dict
+        
+    def _parse_collision(self, collisions_dict, node):
+        '''
+        max_contacts not in example. can it occur?
+        '''
+        collision_dict = {}
+        name = node.get('name')
+        collision_dict['name'] = name
+        index = int(node.find('index').text)
+        collision_dict['pose'] = self.base_poses[index]
+        
+        bitmask = int(float(node.find('coll_bitmask').text))
+        collision_dict['bitmask'] = bitmask
+        
+        geometry_dict = self._parse_geometry(node, 'collision')
+        collision_dict['geometry'] = geometry_dict
+        
+        max_contacts = node.find('cmax_num_contacts')
+        if max_contacts is not None:
+            collision_dict['max_contacts'] = int(max_contacts.text)
+        
+        collisions_dict[name] = collision_dict
+        
+    
+    def _parse_links(self, nodes):
+        '''
+        '''
+        links_dict = {}
+        for node in nodes:
+            index = int(node.find('index').text)
+            name = node.get('name')
+            self.link_index_dict[index] = name
+            
+            group = int(node.find('groupid').text)
+            node_group_dict = {'name': name,
+                               'index': index}
+            if group in self.link_groups:
+                self.link_groups[group].append(node_group_dict)
+            else:
+                self.link_groups[group] = [node_group_dict]
+                
+            if index in self.link_indices:
+                link_dict = {}
+                
+                #link_dict['filename'] = node.find('filename').text
+                link_dict['name'] = node.attrib['name']
+                
+                pose = self.base_poses[index]
+                link_dict['pose'] = pose
+                
+                visuals_dict = {}
+                self._parse_visual(visuals_dict, node)
+                link_dict['visual'] = visuals_dict
+                
+                collisions_dict = {}
+                self._parse_collision(collisions_dict, node)
+                link_dict['collision'] = collisions_dict
+                
+                inertial_dict = {}
+                mass = round_float(node.find('mass').text)
+                inertial_dict['mass'] = mass
+                inertia = node.find('inertia')
+                
+                # if no inertia provided use identity matrix
+                if inertia is None or not bool(inertia.text):
+                    inertial_dict['inertia'] = [1.0, 0.0, 0.0,
+                                                     1.0, 0.0,
+                                                          1.0]
+                else:
+                    i00 = round_float(node.find('i00').text)
+                    i01 = round_float(node.find('i01').text)
+                    i02 = round_float(node.find('i02').text)
+                    i11 = round_float(node.find('i11').text)
+                    i12 = round_float(node.find('i12').text)
+                    i22 = round_float(node.find('i22').text)
+                    inertial_dict['inertia'] = [i00, i01, i02,
+                                                     i11, i12,
+                                                          i22]
+                links_dict[name] = link_dict
+                
+            else:
+                self.vis_coll_groups[index] = group
+                
+        return links_dict
+        
+    def _parse_additional_visuals_and_collisions(self, model, nodes):
+        '''
+        not well-tested yet
+        '''
+        for node in nodes:
+            index = int(node.find('index').text)
+            if index in self.vis_coll_groups:
+                group = self.link_groups[self.vis_coll_groups[index]]
+                for group_node in group:
+                    if group_node['index'] in self.link_indices:
+                        visuals_dict = model['links'][group_node['name']]['visual']
+                        self._parse_visual(visuals_dict, node)
+                        model['links'][group_node['name']]['visual'] = visuals_dict
+                        
+                        collisions_dict = model['links'][group_node['name']]['collision']
+                        self._parse_collision(collisions_dict, node)
+                        model['links'][group_node['name']]['collision'] = collisions_dict
+                        
+                        break
+        
+    def _parse_joints(self, joints):
+        '''
+        '''
+        joints_dict = {}
+        for joint in joints:
+            joint_dict = {}
+            name = joint.get('name')
+            joint_dict['name'] = name
+            joint_dict['type'] = joint.find('type').text
+            
+            parent_index = int(joint.find('nodeindex1').text)
+            joint_dict['parent'] = self.link_index_dict[parent_index]
+            child_index = int(joint.find('nodeindex2').text)
+            joint_dict['child'] = self.link_index_dict[child_index]
+            
+            joints_dict[name] = joint_dict
+        return joints_dict
+        
+    def _apply_relative_ids(self, nodes):
+        '''
+        seems to work but not well-tested yet
+        '''
+        base_nodes = {}
+        rel_nodes = {}
+        for node in nodes:
+            index = int(node.find('index').text)
+            pose = self._get_pose(node)
+            if node.find('relativeid') is not None:
+                node_dict = {'pose': pose,
+                             'rel_id': int(node.find('relativeid').text)}
+                rel_nodes[index] = node_dict
+            else:
+                base_nodes[index] = pose
+        num_rel_nodes = -1
+        while rel_nodes:        
+            to_delete = []
+            if len(rel_nodes) == num_rel_nodes:             # check for infinite loop (happens if referenced node does not exist)
+                print('Error: non-existant relative id')
+                break
+            num_rel_nodes = len(rel_nodes)
+            for rel_index in rel_nodes:
+                rel_node = rel_nodes[rel_index]
+                base = rel_node['rel_id']
+                if base in base_nodes:
+                    base_pose = base_nodes[base]
+                    rel_pose = rel_node['pose']
+                    applied_pose = []
+                    for bp, rp in zip(base_pose, rel_pose):
+                        applied_pose.append(bp+rp)
+                    base_nodes[rel_index] = applied_pose
+                    to_delete.append(rel_index)
+            for index in to_delete:
+                del rel_nodes[index]
+        self.base_poses = base_nodes
+    
+    def _parse_sensors(self, sensors):
+        '''
+        'link' is missing in manual
+        '''
+        sensors_dict = {}
+        for sensor in sensors:
+            sensor_dict = {}
+            name = sensor.get('name')
+            sensor_dict['link'] = None  # where to get this?
+            sensor_dict['sensorType'] = sensor.get('type')
+            sensors_dict[name] = sensor_dict
+    
+    def _parse_motors(self, motors):
+        '''
+        don't know yet what motors look like
+        '''
+        pass
+    
+    def _parse_controllers(self, controllers):
+        '''
+        don't know yet what controllers look like
+        '''
+        pass
 
 
 class URDFModelParser(RobotModelParser):
@@ -446,10 +798,21 @@ class SMURFModelParser(RobotModelParser):
     """Class derived from RobotModelParser which parses a SMURF model"""
 
     def __init__(self, filepath):
-        RobotModelParser.__init__(filepath)
+        RobotModelParser.__init__(self, filepath)
 
     def parseModel(self):
         print("Parsing SMURF model...")
+        stream = open(self.filepath, 'r')
+        smurf_spec = yaml.load(stream)
+        smurf_files = smurf_spec['files']
+        for smurf_file in smurf_files:
+            if smurf_file.split('.')[-1] == 'urdf':
+                urdf_parser = URDFModelParser(os.path.dirname(self.filepath) + '/' + smurf_file)
+                urdf_parser.parseModel()
+                self.robot = urdf_parser.robot
+            elif smurf_file.split('.')[-1] in ['yml', 'yaml']:
+                pass
+                # TODO
 
 
 class RobotModelImporter(bpy.types.Operator):

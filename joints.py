@@ -343,3 +343,100 @@ class AttachMotorOperator(Operator):
                 joint['motor/motorMaxForce'] = self.taumax
                 joint['type'] = 1 if self.motortype == 'servo' else 2
         return{'FINISHED'}
+
+
+class Store_Pose_Operator(bpy.types.Operator):
+	"""
+	"""
+	'''
+	'''
+	bl_idname = 'object.mt_store_armas_pose'
+	bl_label = 'Store Armature Poses'
+	bl_description = 'Store the pose of all armatures in the scene.'
+	bl_options = {'REGISTER'}
+	
+	def execute(self, context):
+		print('actions:')
+		for action in bpy.data.actions:
+			print(action.name)
+		print()
+		objects = bpy.context.scene.objects
+		counter = 1
+		store_arma = None
+		for obj in objects:
+			if obj.type == 'ARMATURE':
+				arma = obj
+				
+				arma.select = True
+				bpy.context.scene.objects.active = arma
+				
+				bpy.ops.object.mode_set(mode='POSE')
+				arma_name = arma.name
+				bpy.ops.poselib.new()
+				poselib = bpy.data.actions['PoseLib']
+				poselib.name = 'poselib_' + arma_name
+				bpy.ops.poselib.pose_add(name='pose_' + arma_name + '_0')
+				
+		return {'FINISHED'}
+		
+
+class Load_Pose_Operator(bpy.types.Operator):
+    """
+    """
+    '''
+    '''
+    bl_idname = 'object.mt_load_armas_pose'
+    bl_label = 'Load Armature Poses'
+    bl_description = 'Load the pose of all armatures in the scene.'
+    bl_options = {'REGISTER'}
+	
+    def execute(self, context):
+        objects = bpy.context.scene.objects
+        armature_objects = []
+        counter = 1
+        for obj in objects:
+            if obj.type == 'ARMATURE':
+                arma = obj
+                arma_name = arma.name
+                print(arma_name)
+                bpy.ops.object.mode_set(mode='OBJECT')
+                bpy.ops.object.select_all(action='DESELECT')
+                arma.select = True
+                bpy.context.scene.objects.active = arma
+                
+                bpy.ops.object.mode_set(mode='POSE')
+                
+                poselib = bpy.data.actions['poselib_' + arma.name]
+                if poselib:
+                    print('here is a lib!')
+                    poses = poselib.pose_markers
+                    wanted_pose = None
+                    #print('pose_' + arma_name + '_0')
+                    for pose in poses:
+                        print('\t', pose.name)
+                        if pose.name == 'pose_' + arma_name + '_0':
+                            wanted_pose = pose
+                            break
+                    if wanted_pose:
+                        poselib.pose_markers.active = wanted_pose
+                        #bpy.ops.object.mode_set(mode='POSE')
+                        
+                        print('area:', bpy.context.area.type)
+                        print('blend_data:')
+                        for object in bpy.context.blend_data.objects:
+                            print('\t', object.name)
+                        print('mode:', bpy.context.mode)
+                        print('region:', bpy.context.region.type)
+                        #print('window:', bpy.context.window.name)
+                        
+                        bpy.ops.poselib.apply_pose()
+                    else:
+                        print('no pose')
+                        # TODO
+                        pass
+                else:
+                    print('no lib')
+                    # TODO
+                    pass
+        print('ok')
+        return {'FINISHED'}
