@@ -482,7 +482,7 @@ class EditInertia(Operator):
         ob = context.active_object
         return ob is not None and ob.mode == 'OBJECT' and ob.MARStype == 'inertial'
 
-
+# TODO: implement this properly
 class EditStringList(Operator):
     """Edit Inertia Operator"""
     bl_idname = "object.phobos_edit_inertia"
