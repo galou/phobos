@@ -14,7 +14,7 @@ You may use the provided install shell script.
 
 import bpy
 from bpy.types import Operator
-from bpy.props import EnumProperty, BoolProperty, StringProperty, IntProperty, FloatVectorProperty
+from bpy.props import EnumProperty, BoolProperty, StringProperty, IntProperty, FloatVectorProperty, BoolVectorProperty
 from . import defs
 from . import utility
 
@@ -57,6 +57,13 @@ def register():
     bpy.types.World.exportYAML = BoolProperty(name = "exportYAML", update=updateExportOptions)
 
     #bpy.types.World.gravity = FloatVectorProperty(name = "gravity")
+    bpy.types.Armature.collisionmask = BoolVectorProperty(
+        name="collision mask",
+        description="collision mask",
+        size=16,
+        default=[True] + [False]*15,
+        subtype='LAYER'
+    )
 
 def unregister():
     print("Unregistering gui...")
@@ -374,11 +381,13 @@ class PhobosObjectPanel(bpy.types.Panel):
 
         #the following is used for real pre-defined rather than custom properties
         #row_type.prop(bpy.context.active_object, "type")
-        row_type = layout.row()
-        row_type.label(icon="OBJECT_DATA")
+        #row_type = layout.row()
+        layout.label(icon="OBJECT_DATA")
         #row_type.prop_enum(bpy.context.active_object, '["type"]', "node")
         #row_type.prop_enum(bpy.context.active_object, 'MARStype')
-        row_type.prop(bpy.context.active_object, 'MARStype')
+        layout.prop(bpy.context.active_object, 'MARStype')
+        if isinstance(context.active_object.data, bpy.types.Armature):
+            layout.prop(bpy.context.active_object.data, 'collisionmask')
 
         box_props = layout.box()
 
