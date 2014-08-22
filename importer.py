@@ -59,6 +59,49 @@ def round_float(float_as_str, decimal=6):
     does not seem to work right for some reason
     '''
     return round(float(float_as_str), decimal)
+    
+def pos_rot_tree_to_lists(position, rotation):
+    '''
+    '''
+    if position:
+        px = round_float(position.find('x').text)
+        py = round_float(position.find('y').text)
+        pz = round_float(position.find('z').text)
+    else:
+        px, py, pz = (0, 0, 0)
+    if rotation:
+        rw = round_float(rotation.find('w').text)
+        rx = round_float(rotation.find('x').text)
+        ry = round_float(rotation.find('y').text)
+        rz = round_float(rotation.find('z').text)
+    else:
+        rw, rx, ry, rz = (0, 0, 0, 0)
+        
+    return [px, py, pz], [rw, rx, ry, rz]
+        
+def calc_pose_formats(position, rotation):
+    '''
+    test cases with None parameters
+    '''
+    px, py, pz = position
+    rw, rx, ry, rz = rotation
+    pose_dict = {}
+    
+    translation = [px, py, pz]
+    quaternion = mathutils.Quaternion([rw, rx, ry, rz])
+    euler = quaternion.to_euler()
+    pose_dict['translation'] = mathutils.Matrix.Translation(translation)
+    pose_dict['rotation_quaternion'] = [rw, rx, ry, rz]
+    pose_dict['rotation_euler'] = [euler.x, euler.y, euler.z]
+    rm = quaternion.to_matrix()
+    #matrix = [[rm[0][0], rm[1][0], rm[2][0], px],
+    #          [rm[0][1], rm[1][1], rm[2][1], py],
+    #          [rm[0][2], rm[1][2], rm[2][2], pz],
+    #          [0,        0,        0,        1]]
+    
+    pose_dict['matrix'] = rm.to_4x4()
+    
+    return pose_dict
 
 class RobotModelParser():
     """Base class for a robot model file parser of a specific type"""
@@ -86,8 +129,8 @@ class RobotModelParser():
             # 2: move to parents origin by setting the world matrix to the parents world matrix
             childLink.matrix_world = parentLink.matrix_world
             # 3: apply local transform as saved in urdf (change matrix_local from identity to urdf)
-            urdf_loc = mathutils.Matrix.Translation(child['pose'][0:3])
-            urdf_rot = mathutils.Euler(tuple(child['pose'][3:]), 'XYZ').to_matrix().to_4x4()
+            urdf_loc = child['pose']['translation']
+            urdf_rot = child['pose']['matrix']
             urdfmatrix = urdf_loc * urdf_rot
             childLink.matrix_local = urdfmatrix
             # 4: be happy, as world and basis are now the same and local is the transform to be exported to urdf
@@ -101,8 +144,8 @@ class RobotModelParser():
         parentLink = bpy.data.objects[link['name']]
         if 'inertial' in link:
             if 'pose' in link['inertial']:
-                urdf_geom_loc = mathutils.Matrix.Translation(link['inertial']['pose'][0:3])
-                urdf_geom_rot = mathutils.Euler(tuple(link['inertial']['pose'][3:]), 'XYZ').to_matrix().to_4x4()
+                urdf_geom_loc = link['inertial']['pose']['translation']
+                urdf_geom_rot = link['inertial']['pose']['matrix']
             else:
                 urdf_geom_loc = mathutils.Matrix.Identity(4)
                 urdf_geom_rot = mathutils.Matrix.Identity(4)
@@ -123,8 +166,9 @@ class RobotModelParser():
                     geom = link[geomsrc][g]
                     print([key for key in geom])
                     if 'pose' in geom:
-                        urdf_geom_loc = mathutils.Matrix.Translation(geom['pose'][0:3])
-                        urdf_geom_rot = mathutils.Euler(tuple(geom['pose'][3:]), 'XYZ').to_matrix().to_4x4()
+                        print('geom:', geom)
+                        urdf_geom_loc = geom['pose']['translation']
+                        urdf_geom_rot = geom['pose']['matrix']
                     else:
                         urdf_geom_loc = mathutils.Matrix.Identity(4)
                         urdf_geom_rot = mathutils.Matrix.Identity(4)
@@ -305,21 +349,7 @@ class MARSModelParser(RobotModelParser):
         with open(self.filepath+'_debug.yml', 'w') as outputfile:
             outputfile.write(yaml.dump(self.robot))
             
-        print(self.filepath+'_debug.yml')
-        
-    def _get_pose(self, node):
-        '''
-        '''
-        position = node.find('position')
-        px = round_float(position.find('x').text)
-        py = round_float(position.find('y').text)
-        pz = round_float(position.find('z').text)
-        rotation = node.find('rotation')
-        rw = round_float(rotation.find('w').text)
-        rx = round_float(rotation.find('x').text)
-        ry = round_float(rotation.find('y').text)
-        rz = round_float(rotation.find('z').text)
-        return [px, py, pz, rw, rx, ry, rz]
+        print(self.robot)
     
     def _get_links(self, nodes, joints):
         '''
@@ -345,14 +375,14 @@ class MARSModelParser(RobotModelParser):
                 name = 'material_' + str(mat_id)
             material_dict['name'] = name
             
-            for xml_colour in mtdefs.MARSrevlegdict:
+            for xml_colour in defs.MARSrevlegdict:
                 colour = material.find(xml_colour)
                 if colour is not None:
                     r = round_float(colour.find('r').text)
                     g = round_float(colour.find('g').text)
                     b = round_float(colour.find('b').text)
                     a = round_float(colour.find('a').text)
-                    py_colour = mtdefs.MARSrevlegdict[xml_colour]
+                    py_colour = defs.MARSrevlegdict[xml_colour]
                     material_dict[py_colour] = [r, g, b, a]
             
             transparency = material.find('transparency')
@@ -407,23 +437,10 @@ class MARSModelParser(RobotModelParser):
         visual_dict['name'] = name
         index = int(node.find('index').text)
         
-        pose = self.base_poses[index]
-        visual_pose = [0.0]*len(pose)
         visual_position = node.find('visualposition')
-        if visual_position is not None:
-            visual_pose[0] = round_float(visual_position.find('x').text)
-            visual_pose[1] = round_float(visual_position.find('y').text)
-            visual_pose[2] = round_float(visual_position.find('z').text)
         visual_rotation = node.find('visualrotation')
-        if visual_rotation is not None:
-            visual_pose[3] = round_float(visual_rotation.find('w').text)
-            visual_pose[4] = round_float(visual_rotation.find('x').text)
-            visual_pose[5] = round_float(visual_rotation.find('y').text)
-            visual_pose[6] = round_float(visual_rotation.find('z').text)
-        abs_pose = []
-        for p, vp in zip(pose, visual_pose):
-            abs_pose.append(p+vp)
-        visual_dict['pose'] = abs_pose
+        position, rotation = pos_rot_tree_to_lists(visual_position, visual_rotation)
+        visual_dict['pose'] = calc_pose_formats(position, rotation)
         
         mat_index = int(node.find('material_id').text)
         visual_dict['material'] = self.material_indices[mat_index]
@@ -441,6 +458,7 @@ class MARSModelParser(RobotModelParser):
         name = node.get('name')
         collision_dict['name'] = name
         index = int(node.find('index').text)
+        print('base_poses:', self.base_poses)
         collision_dict['pose'] = self.base_poses[index]
         
         bitmask = int(float(node.find('coll_bitmask').text))
@@ -563,7 +581,12 @@ class MARSModelParser(RobotModelParser):
         rel_nodes = {}
         for node in nodes:
             index = int(node.find('index').text)
-            pose = self._get_pose(node)
+            xml_position = node.find('position')
+            xml_rotation = node.find('rotation')
+            position, rotation = pos_rot_tree_to_lists(xml_position, xml_rotation)
+            print('position:', position)
+            print('rotation:', rotation)
+            pose = calc_pose_formats(position, rotation)
             if node.find('relativeid') is not None:
                 node_dict = {'pose': pose,
                              'rel_id': int(node.find('relativeid').text)}
@@ -655,7 +678,7 @@ class URDFModelParser(RobotModelParser):
         #find any links that still have no pose (most likely because they had no parent)
         for link in links:
             if not 'pose' in links[link]:
-                links[link]['pose'] = defaults.idtransform
+                links[link]['pose'] = calc_pose_formats(None, None)
             #print(link, links[link]['pose'])
 
         #write parent-child information to nodes
@@ -692,9 +715,10 @@ class URDFModelParser(RobotModelParser):
             newlink['inertial'] = {}
             origin = inertial.find('origin')
             if origin is not None:
-                newlink['inertial']['pose'] = [float(num) for num in (origin.attrib['xyz'].split() + origin.attrib['rpy'].split())]
+                raw_pose = [float(num) for num in (origin.attrib['xyz'].split() + origin.attrib['rpy'].split())]
+                newlink['inertial']['pose'] = calc_pose_formats(raw_pose[:3], raw_pose[3:])
             else:
-                newlink['inertial']['pose'] = defaults.idtransform
+                newlink['inertial']['pose'] = calc_pose_formats(None, None)
             mass = inertial.find('mass')
             if mass is not None:
                 newlink['inertial']['mass'] = float(mass.attrib['value'])
@@ -718,9 +742,10 @@ class URDFModelParser(RobotModelParser):
             vis['name'] = visname
             origin = visual.find('origin')
             if origin is not None:
-                vis['pose'] = [float(num) for num in (origin.attrib['xyz'].split() + origin.attrib['rpy'].split())]
+                 raw_pose = [float(num) for num in (origin.attrib['xyz'].split() + origin.attrib['rpy'].split())]
+                 vis['pose'] = calc_pose_formats(raw_pose[:3], raw_pose[3:])
             else:
-                vis['pose'] = defaults.idtransform
+                vis['pose'] = calc_pose_formats(None, None)
             geometry = visual.find('geometry')
             if geometry is not None:
                 vis['geometry'] = {a: parse_text(geometry[0].attrib[a]) for a in geometry[0].attrib}
@@ -757,9 +782,10 @@ class URDFModelParser(RobotModelParser):
             col['name'] = colname
             origin = collision.find('origin')
             if origin is not None:
-                col['pose'] = [float(num) for num in (origin.attrib['xyz'].split() + origin.attrib['rpy'].split())]
+                raw_pose = [float(num) for num in (origin.attrib['xyz'].split() + origin.attrib['rpy'].split())]
+                col['pose'] = calc_pose_formats(raw_pose[:3], raw_pose[3:])
             else:
-                col['pose'] = defaults.idtransform
+                col['pose'] = calc_pose_formats(None, None)
             geometry = collision.find('geometry')
             if geometry is not None:
                 col['geometry'] = {a: parse_text(geometry[0].attrib[a]) for a in geometry[0].attrib}
@@ -785,7 +811,8 @@ class URDFModelParser(RobotModelParser):
         origin = joint.find('origin')
         newjoint['parent'] = joint.find('parent').attrib['link']
         newjoint['child'] = joint.find('child').attrib['link']
-        pose = [float(num) for num in (origin.attrib['xyz'].split() + origin.attrib['rpy'].split())]
+        raw_pose = [float(num) for num in (origin.attrib['xyz'].split() + origin.attrib['rpy'].split())]
+        pose = calc_pose_formats(raw_pose[:3], raw_pose[3:])
         #axis
         #calibration
         #dynamics
