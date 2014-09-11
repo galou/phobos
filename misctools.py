@@ -1,16 +1,29 @@
-'''
-Phobos - a Blender Add-On to work with MARS robot models
+#!/usr/bin/python
+
+"""
+Copyright 2014, University of Bremen & DFKI GmbH Robotics Innovation Center
+
+This file is part of Phobos, a Blender Add-On to edit robot models.
+
+Phobos is free software: you can redistribute it and/or modify
+it under the terms of the GNU Lesser General Public License
+as published by the Free Software Foundation, either version 3
+of the License, or (at your option) any later version.
+
+Phobos is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Lesser General Public License for more details.
+
+You should have received a copy of the GNU Lesser General Public License
+along with Phobos.  If not, see <http://www.gnu.org/licenses/>.
 
 File misctools.py
 
 Created on 6 Jan 2014
 
 @author: Kai von Szadkowski
-
-Copy this add-on to your Blender add-on folder and activate it
-in your preferences to gain instant (virtual) world domination.
-You may use the provided install shell script.
-'''
+"""
 
 import bpy
 import math
@@ -483,55 +496,6 @@ class EditInertia(Operator):
         return ob is not None and ob.mode == 'OBJECT' and ob.MARStype == 'inertial'
 
 
-class EditStringList(Operator):
-    """Edit Inertia Operator"""
-    bl_idname = "object.phobos_edit_inertia"
-    bl_label = "Edit inertia of selected object(s)"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    #inertiamatrix = FloatVectorProperty (
-    #        name = "inertia",
-    #        default = [0, 0, 0, 0, 0, 0, 0, 0, 0],
-    #        subtype = 'MATRIX',
-    #        size = 9,
-    #        description = "set inertia for a link")
-
-    #inertiavector = StringVectorProperty (
-    #        name = "inertiavec",
-    #        default = ['', '', ''],
-    #        subtype = 'NONE',
-    #        size = 3,
-    #        description = "set inertia for a link"
-    #        )
-
-    def invoke(self, context, event):
-        if 'inertia' in context.active_object:
-            self.inertiavector = mathutils.Vector(context.active_object['inertia'])
-        return self.execute(context)
-
-    def execute(self, context):
-        #m = self.inertiamatrix
-        #inertialist = []#[m[0], m[1], m[2], m[4], m[5], m[8]]
-        #obj['inertia'] = ' '.join(inertialist)
-        for obj in context.selected_objects:
-            if obj.MARStype == 'inertial':
-                obj['inertia'] = self.inertiavector#' '.join([str(i) for i in self.inertiavector])
-        return {'FINISHED'}
-
-    #def draw(self, context):
-    #    layout = self.layout
-    #    layout.operator(OBJECT_OT_my_operator.bl_idname, text="Operator 1 - invoke (default)")
-    #
-    #    col = layout.column()
-    #    col.operator_context = 'EXEC_DEFAULT'
-    #    col.operator(OBJECT_OT_my_operator.bl_idname, text="Operator 1 - execute")
-
-    #@classmethod
-    #def poll(cls, context):
-    #    ob = context.active_object
-    #    return ob is not None and ob.mode == 'OBJECT' and ob.MARStype == 'inertial'
-
-
 class PartialRename(Operator):
     """Partial Rename Operator"""
     bl_idname = "object.phobos_partial_rename"
@@ -552,7 +516,6 @@ class PartialRename(Operator):
         for obj in bpy.context.selected_objects:
             obj.name = obj.name.replace(self.find, self.replace)
         return {'FINISHED'}
-def replaceNameElement(prop, old, new):
 
     @classmethod
     def poll(cls, context):
@@ -596,6 +559,53 @@ class SmoothenSurfaceOperator(Operator):
         return ob is not None and ob.mode == 'OBJECT'
 
 
+class SetOriginToCOMOperator(Operator):
+    """SetOriginToCOMOperator"""
+    bl_idname = "object.phobos_set_origin_to_com"
+    bl_label = "Set Origin to COM"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    com_shift = FloatVectorProperty(
+        name="CAD origin shift",
+        default=(0.0, 0.0, 0.0,),
+        subtype='TRANSLATION',
+        unit='LENGTH',
+        size=3,
+        precision=6,
+        description="distance between objects")
+
+    cursor_location = FloatVectorProperty(
+        name="CAD origin",
+        default=(0.0, 0.0, 0.0,),
+        subtype='TRANSLATION',
+        unit='LENGTH',
+        size=3,
+        precision=6,
+        description="distance between objects")
+
+    def execute(self, context):
+        master = context.active_object
+        slaves = context.selected_objects
+        to_cadorigin = self.cursor_location - master.matrix_world.to_translation()
+        com_shift_world = to_cadorigin + self.com_shift
+        for s in slaves:
+            utility.selectObjects([s], True, 0)
+            context.scene.cursor_location = s.matrix_world.to_translation() + com_shift_world
+            bpy.ops.object.origin_set(type='ORIGIN_CURSOR')
+        utility.selectObjects(slaves, True, slaves.index(master))
+        context.scene.cursor_location = self.cursor_location.copy()
+        return {'FINISHED'}
+
+    def invoke(self, context, event):
+        self.cursor_location = context.scene.cursor_location.copy()
+        return self.execute(context)
+
+    @classmethod
+    def poll(cls, context):
+        ob = context.active_object
+        return ob is not None and ob.mode == 'OBJECT'
+
+
 class CreateInertialOperator(Operator):
     """CreateInertialOperator"""
     bl_idname = "object.create_inertial_objects"
@@ -626,23 +636,27 @@ class CreateInertialOperator(Operator):
             for link in links:
                 viscols.update(inertia.getInertiaRelevantObjects(link)) #union?
         for obj in viscols:
-            inertial = inertia.createInertial(obj)
-            if 'mass' in obj:
-                inertial['mass'] = obj['mass']
-                if self.auto_compute:
-                    geometry = robotdictionary.deriveGeometry(obj)
-                    inertial['inertia'] = inertia.calculateInertia(inertial['mass'], geometry)
+            if self.auto_compute:
+                mass = obj['mass'] if 'mass' in obj else None
+                geometry = robotdictionary.deriveGeometry(obj)
+                inert = inertia.calculateInertia(mass, geometry)
+                if mass is not None and inert is not None:
+                    inertial = inertia.createInertial(obj)
+                    inertial['mass'] = mass
+                    inertial['inertia'] = inert
+            else:
+                inertia.createInertial(obj)
         for link in links:
             if self.auto_compute:
-                inertial = inertia.createInertial(link)
-                mass, com, inertia = inertia.fuseInertiaData(utility.getImmediateChildren(link, ['inertial']))
-                if mass and com and inertia:
+                mass, com, inert = inertia.fuseInertiaData(utility.getImmediateChildren(link, ['inertial']))
+                if mass and com and inert:
+                    inertial = inertia.createInertial(link)
                     com_translate = mathutils.Matrix.Translation(com)
                     inertial.matrix_local = com_translate
                     inertial['mass'] = mass
-                    inertial['inertia'] = inertia.inertiaMatrixToList(inertia)
+                    inertial['inertia'] = inertia.inertiaMatrixToList(inert)
             else:
-                inertial = inertia.createInertial(link)
+                inertia.createInertial(link)
         return {'FINISHED'}
 
 
