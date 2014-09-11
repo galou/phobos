@@ -107,7 +107,7 @@ def calc_pose_formats(position, rotation):
     translation = [px, py, pz]
     quaternion = mathutils.Quaternion([rw, rx, ry, rz])
     euler = quaternion.to_euler()
-    pose_dict['translation'] = translation #mathutils.Matrix.Translation(translation)
+    pose_dict['translation'] = translation
     pose_dict['rotation_quaternion'] = [rw, rx, ry, rz]
     pose_dict['rotation_euler'] = [euler.x, euler.y, euler.z]
     rm = quaternion.to_matrix()
@@ -116,18 +116,44 @@ def calc_pose_formats(position, rotation):
               [rm[0][2], rm[1][2], rm[2][2], pz],
               [0,        0,        0,        1]]
     
-    pose_dict['matrix'] = matrix #rm.to_4x4()
+    pose_dict['matrix'] = matrix
     
     return pose_dict
     
 def add_quaternion(rot1, rot2):
     '''
-    Add two rotations in euler angle format.
+    Add two rotations in quaternion format.
     '''
     quat1 = mathutils.Quaternion(rot1)
     quat2 = mathutils.Quaternion(rot2)
     quat_sum = quat1 * quat2
     return (quat_sum.w, quat_sum.x, quat_sum.y, quat_sum.z)
+    
+    
+def handle_missing_geometry(no_visual_geo, no_collision_geo, link_dict):
+    '''
+    Handle missing visual and collision geometry.
+    I hope it was meant like that ...
+    '''
+    if no_visual_geo or no_collision_geo:
+        print("\n### WARNING: Missing geometry information in", newlink['name'], ".")
+    if no_visual_geo:
+        print('Affected visual elements are:', no_visual_geo, '.\n\
+                Trying to get missing information from collision elements.')
+        for visual in no_visual_geo:
+            try:
+                link_dict['visual'][visual]['geometry'] = link_dict['collision']['collision' + geo[len('visual'):]]['geometry']
+            except:
+                pass # TODO: print something?
+    elif no_collision_geo:
+        print('Affected collision elements are:', no_visual_geo, '.\n\
+                Trying to get missing information from visual elements.')
+        for collision in no_collision_geo:
+            try:
+                link_dict['collision'][collision]['geometry'] = link_dict['visual']['visual' + geo[len('collision'):]]['geometry']
+            except:
+                pass # TODO: print something?
+    
 
 class RobotModelParser():
     """Base class for a robot model file parser of a specific type"""
@@ -165,8 +191,8 @@ class RobotModelParser():
 
     def placeLinkSubelements(self, link):
         #urdf_sca = #TODO: solve problem with scale
-        # 3.2: make sure to take into account visual information #TODO: also take into account inertial and joint axis (for joint sphere) and collision (bounding box)
-        #* urdf_visual_loc * urdf_visual_rot #*urdf_sca
+        # 3.2: make sure to take into account visual information
+        #TODO: also take into account inertial and joint axis (for joint sphere) and collision (bounding box)
         parentLink = bpy.data.objects[link['name']]
         if 'inertial' in link:
             if 'pose' in link['inertial']:
@@ -186,30 +212,27 @@ class RobotModelParser():
             bpy.ops.object.parent_set(type='BONE_RELATIVE')
             #geom.matrix_world = parentLink.matrix_world #FIXME: this applies the scale of the parent, making boxes BIIIG
             geom.matrix_local = urdf_geom_loc * urdf_geom_rot
-        stream = open(self.filepath+'current_link.yml', 'w')
-        yaml.dump(link, stream)
-        stream.close()
         for geomsrc in ['visual', 'collision']:
             if geomsrc in link:
                 for g in link[geomsrc]:
-                    geom = link[geomsrc][g]
+                    vis_coll = link[geomsrc][g]
                     #print([key for key in geom])
-                    if 'pose' in geom:
+                    if 'pose' in vis_coll:
                         #print('geom:', geom)
-                        urdf_geom_loc = mathutils.Matrix.Translation(geom['pose']['translation'])
-                        urdf_geom_rot = mathutils.Matrix(geom['pose']['matrix']).to_4x4()
+                        vis_coll_loc = mathutils.Matrix.Translation(vis_coll['pose']['translation'])
+                        vis_coll_rot = mathutils.Matrix(vis_coll['pose']['matrix']).to_4x4()
                     else:
-                        urdf_geom_loc = mathutils.Matrix.Identity(4)
-                        urdf_geom_rot = mathutils.Matrix.Identity(4)
-                    geoname = geom['name'] #g
-                    geom = bpy.data.objects[geoname]
+                        vis_coll_loc = mathutils.Matrix.Identity(4)
+                        vis_coll_rot = mathutils.Matrix.Identity(4)
+                    vis_coll_name = vis_coll['name'] #g
+                    geom = bpy.data.objects[vis_coll_name]
                     bpy.ops.object.select_all(action="DESELECT")
                     geom.select = True
                     parentLink.select = True
                     bpy.context.scene.objects.active = parentLink
                     bpy.ops.object.parent_set(type='BONE_RELATIVE')
                     geom.matrix_world = parentLink.matrix_world
-                    geom.matrix_local = urdf_geom_loc * urdf_geom_rot
+                    geom.matrix_local = vis_coll_loc * vis_coll_rot
 
     def createGeometry(self, viscol, geomsrc):
         newgeom = None
@@ -223,7 +246,7 @@ class RobotModelParser():
                 obj.tag = True
             if geomtype == 'mesh':
                 filetype = geom['filename'].split('.')[-1]
-                print(geom['filename'])
+                #print(geom['filename'])
                 if filetype == 'obj' or filetype == 'OBJ':
                     bpy.ops.import_scene.obj(filepath=os.path.join(self.path, geom['filename']))
                 elif filetype == 'stl' or filetype == 'STL':
@@ -235,10 +258,10 @@ class RobotModelParser():
                 else:
                     print('ERROR: Could not import object.')
                 # find the newly imported obj
-                print('new object name:', viscol['name'])
-                print("existing objects' names:")
+                #print('new object name:', viscol['name'])
+                #print("existing objects' names:")
                 for obj in bpy.data.objects:
-                    print(obj.name)
+                    #print(obj.name)
                     if not obj.tag:
                         newgeom = obj
                         #with obj file import, blender only turns the object, not the vertices,
@@ -302,7 +325,6 @@ class RobotModelParser():
         newlink.name = link['name']
         newlink.location = (0.0, 0.0, 0.0)
         newlink.scale = (0.3, 0.3, 0.3) #TODO: make this depend on the largest visual or collision object
-        #newlink.scale = (1, 0.1, 0.01)
         bpy.ops.object.transform_apply(scale=True)
         newlink.MARStype = 'link'
         if newlink.name != link['name']:
@@ -341,6 +363,15 @@ class RobotModelParser():
         self.placeChildLinks(root)
         for link in self.robot['links']:
             self.placeLinkSubelements(self.robot['links'][link])
+        print('Done!')
+            
+        
+    def _debug_output(self):
+        '''
+        Write the robot dictionary to a yaml file in the source file's directory
+        '''
+        with open(self.filepath + '_debug.yml', 'w') as outputfile:
+            outputfile.write(yaml.dump(self.robot)) #last parameter prevents inline formatting for lists and dictionaries
 
 
 
@@ -356,7 +387,9 @@ class MARSModelParser(RobotModelParser):
         self.material_indices = {}
         self.link_indices = set([])
         self.vis_coll_groups = {}
-        self.base_poses = {}
+        self.applied_rel_id_poses = {}
+        self.missing_vis_geos = {}
+        self.missing_coll_geos = {}
 
     def parseModel(self):
         '''
@@ -364,8 +397,6 @@ class MARSModelParser(RobotModelParser):
         print("\nParsing MARS scene from", self.filepath)
         self.tree = ET.parse(self.filepath)
         root = self.tree.getroot()
-        
-        # robot name is not included in MARS scenes, right?
         
         nodes = root.find('nodelist')
         joints = root.find('jointlist')
@@ -386,10 +417,10 @@ class MARSModelParser(RobotModelParser):
         self.robot['groups'] = self.link_groups
         self._parse_additional_visuals_and_collisions(self.robot, nodes)
         
-        with open(self.filepath+'_debug.yml', 'w') as outputfile:
-            yaml.dump(self.robot, outputfile)
-            
-        print(self.robot)
+        for link in self.robot['links']:
+            handle_missing_geometry(self.missing_vis_geos[link], self.missing_coll_geos[link], self.robot['links'][link])
+        
+        self._debug_output()
     
     def _get_links(self, nodes, joints):
         '''
@@ -438,18 +469,14 @@ class MARSModelParser(RobotModelParser):
                 material_dict['transparency'] = 0.0
                 
             material_dict['shininess'] = round_float(material.find('shininess').text)
-                
             self.material_indices[mat_id] = material_dict
-            
-        # solution for now; there is a better solution plus this is duplicate code:
             material_list.append(material_dict)
             
         for m in material_list:
             materials.makeMaterial(m['name'], tuple(m['color'][0:3]), (1, 1, 1), m['color'][-1])
     
-    def _parse_geometry(self, node, mode):
+    def _parse_geometry(self, vis_coll_dict, node, mode):
         '''
-        mesh incomplete
         '''
         size = None
         if mode == 'visual':
@@ -484,9 +511,14 @@ class MARSModelParser(RobotModelParser):
             x = round_float(size.find('x').text)
             y = round_float(size.find('y').text)
             geometry_dict['size'] = [x, y]
-        return geometry_dict
+        
+        if geometry_dict == {}:
+            return False
+        else:
+            vis_coll_dict['geometry'] = geometry_dict
+            return True
     
-    def _parse_visual(self, visuals_dict, node):
+    def _parse_visual(self, visuals_dict, node, missing_vis_geo):
         '''
         '''
         visual_dict = {}
@@ -494,48 +526,31 @@ class MARSModelParser(RobotModelParser):
         visual_dict['name'] = name
         index = int(node.find('index').text)
         
-        visual_position = node.find('visualposition')
-        if visual_position is None:
-            visual_position = node.find('position')
-        visual_rotation = node.find('visualrotation')
-        if visual_rotation is None:
-            visual_rotation = node.find('rotation')
-        position, rotation = pos_rot_tree_to_lists(visual_position, visual_rotation)
-        #visual_dict['pose'] = calc_pose_formats(position, rotation)
-        
-        visual_dict['pose'] = self.base_poses[index]['pose']
+        visual_dict['pose'] = self.applied_rel_id_poses[index]['pose']
         
         mat_index = int(node.find('material_id').text)
         visual_dict['material'] = self.material_indices[mat_index]
         
-        geometry_dict = self._parse_geometry(node, 'visual')
-        visual_dict['geometry'] = geometry_dict
+        if not self._parse_geometry(visual_dict, node, 'visual'):
+            missing_vis_geo.append(name)
         
         visuals_dict[name] = visual_dict
         
-    def _parse_collision(self, collisions_dict, node):
+    def _parse_collision(self, collisions_dict, node, missing_coll_geo):
         '''
         '''
         collision_dict = {}
         name = 'collision_' + node.get('name')
         collision_dict['name'] = name
-        index = int(node.find('index').text)
-        #print('base_poses:', self.base_poses)
-        #print('collision_pose:', self.base_poses[index])
+        index = int(node.find('index').text)        
         
-        
-        collision_position = node.find('position')
-        collision_rotation = node.find('rotation')
-        position, rotation = pos_rot_tree_to_lists(collision_position, collision_rotation)
-        collision_dict['pose'] = calc_pose_formats(position, rotation)
-        
-        #collision_dict['pose'] = self.base_poses[index]['pose']
+        collision_dict['pose'] = self.applied_rel_id_poses[index]['pose']
         
         bitmask = int(float(node.find('coll_bitmask').text))
         collision_dict['bitmask'] = bitmask
         
-        geometry_dict = self._parse_geometry(node, 'collision')
-        collision_dict['geometry'] = geometry_dict
+        if not self._parse_geometry(collision_dict, node, 'collision'):
+            missing_coll_geo.append(name)
         
         max_contacts = node.find('cmax_num_contacts')
         if max_contacts is not None:
@@ -554,11 +569,6 @@ class MARSModelParser(RobotModelParser):
             inertial_dict['mass'] = round_float(mass.text)
         
         inertia = node.find('inertia')
-        ## if no inertia provided use identity matrix
-        #if inertia is None or not bool(inertia.text):
-        #    inertial_dict['inertia'] = [1.0, 0.0, 0.0,
-        #                                     1.0, 0.0,
-        #                                          1.0]
         if inertia is not None and bool(inertia.text):  # 'inertia' states whether the defined inertia values are to be used
             i00 = round_float(node.find('i00').text)
             i01 = round_float(node.find('i01').text)
@@ -571,17 +581,19 @@ class MARSModelParser(RobotModelParser):
                                                   i22]
                                 
         if inertial_dict is not {}:
+            # inertial pose is always origin for now
             position, rotation = pos_rot_tree_to_lists(None, None)
             inertial_dict['pose'] = calc_pose_formats(position, rotation)
             inertial_dict['name'] = 'inertial_' + node.get('name')
             link_dict['inertial'] = inertial_dict
         
-    
     def _parse_links(self, nodes):
         '''
         '''
         links_dict = {}
         for node in nodes:
+            missing_vis_geo = []
+            missing_coll_geo = []
             index = int(node.find('index').text)
             name = node.get('name')
             self.link_index_dict[index] = name
@@ -597,23 +609,24 @@ class MARSModelParser(RobotModelParser):
             if index in self.link_indices:
                 link_dict = {}
                 
-                #link_dict['filename'] = node.find('filename').text
                 link_dict['name'] = node.attrib['name']
                 
-                pose = self.base_poses[index]['pose']
+                pose = self.applied_rel_id_poses[index]['pose']
                 link_dict['pose'] = pose
                 
                 visuals_dict = {}
-                self._parse_visual(visuals_dict, node)
+                self._parse_visual(visuals_dict, node, missing_vis_geo)
                 link_dict['visual'] = visuals_dict
                 
                 collisions_dict = {}
-                self._parse_collision(collisions_dict, node)
+                self._parse_collision(collisions_dict, node, missing_coll_geo)
                 link_dict['collision'] = collisions_dict
                 
                 inertial_dict = self._parse_inertial(link_dict, node)
                 
                 links_dict[name] = link_dict
+                self.missing_vis_geos[name] = missing_vis_geo
+                self.missing_coll_geos[name] = missing_coll_geo
                 
             else:
                 self.vis_coll_groups[index] = group
@@ -622,7 +635,6 @@ class MARSModelParser(RobotModelParser):
         
     def _parse_additional_visuals_and_collisions(self, model, nodes):
         '''
-        not well-tested yet
         '''
         for node in nodes:
             index = int(node.find('index').text)
@@ -631,11 +643,11 @@ class MARSModelParser(RobotModelParser):
                 for group_node in group:
                     if group_node['index'] in self.link_indices:
                         visuals_dict = model['links'][group_node['name']]['visual']
-                        self._parse_visual(visuals_dict, node)
+                        self._parse_visual(visuals_dict, node, self.missing_vis_geos[group_node['name']])
                         model['links'][group_node['name']]['visual'] = visuals_dict
                         
                         collisions_dict = model['links'][group_node['name']]['collision']
-                        self._parse_collision(collisions_dict, node)
+                        self._parse_collision(collisions_dict, node, self.missing_coll_geos[group_node['name']])
                         model['links'][group_node['name']]['collision'] = collisions_dict
                         
                         break
@@ -662,51 +674,49 @@ class MARSModelParser(RobotModelParser):
         '''
         seems to work but not well-tested yet
         '''
-        base_nodes = {}     # poses with references already applied plus raw pos and rot values for easier calculations
-        rel_nodes = {}
+        base_poses = {}     # poses with references already applied plus raw pos and rot values for easier calculations
+        rel_poses = {}
         for node in nodes:
             index = int(node.find('index').text)
             xml_position = node.find('position')
             xml_rotation = node.find('rotation')
             position, rotation = pos_rot_tree_to_lists(xml_position, xml_rotation)
-            #print('position:', position)
-            #print('rotation:', rotation)
             pose = calc_pose_formats(position, rotation)
+            
             if node.find('relativeid') is not None:
-                rel_node_dict = {'pose': pose,
-                             'rel_id': int(node.find('relativeid').text),
-                             'raw_pos': position,
-                             'raw_rot': rotation}
-                rel_nodes[index] = rel_node_dict
+                rel_pose_dict = {'pose': pose,
+                                 'rel_id': int(node.find('relativeid').text),
+                                 'raw_pos': position,
+                                 'raw_rot': rotation}
+                rel_poses[index] = rel_pose_dict
             else:
-                base_node_dict = {'pose': pose,
+                base_pose_dict = {'pose': pose,
                                   'raw_pos': position,
                                   'raw_rot': rotation}
-                base_nodes[index] = base_node_dict
-        num_rel_nodes = -1
-        while rel_nodes:        
+                base_poses[index] = base_pose_dict
+        num_rel_poses = -1
+        while rel_poses:        
             to_delete = []
-            if len(rel_nodes) == num_rel_nodes:             # check for infinite loop (happens if referenced node does not exist)
+            # check for infinite loop (happens if referenced node does not exist):
+            if len(rel_poses) == num_rel_poses:        
                 print('Error: non-existant relative id')
                 break
-            num_rel_nodes = len(rel_nodes)
-            for rel_index in rel_nodes:
-                rel_node = rel_nodes[rel_index]
-                base = rel_node['rel_id']
-                if base in base_nodes:
-                    base_pose = base_nodes[base]['pose']
-                    rel_pose = rel_node['pose']
-                    applied_pos = [bp+rp for bp, rp in zip(base_nodes[base]['raw_pos'], rel_node['raw_pos'])]
-                    applied_rot = add_quaternion(base_nodes[base]['raw_rot'], rel_node['raw_rot'])
-                    #applied_rot = [br+rr for br, rr in zip(base_nodes[base]['raw_rot'], rel_node['raw_rot'])]
-                    #applied_rot = rel_node['raw_rot']
-                    base_nodes[rel_index] = {'pose': calc_pose_formats(applied_pos, applied_rot),
+            num_rel_poses = len(rel_poses)
+            for rel_index in rel_poses:
+                rel_pose = rel_poses[rel_index]
+                base = rel_pose['rel_id']
+                if base in base_poses:
+                    base_pose = base_poses[base]['pose']
+                    rel = rel_pose['pose']
+                    applied_pos = [bp+rp for bp, rp in zip(base_poses[base]['raw_pos'], rel_pose['raw_pos'])]
+                    applied_rot = add_quaternion(base_poses[base]['raw_rot'], rel_pose['raw_rot'])
+                    base_poses[rel_index] = {'pose': calc_pose_formats(applied_pos, applied_rot),
                                              'raw_pos': applied_pos,
                                              'raw_rot': applied_rot}
                     to_delete.append(rel_index)
             for index in to_delete:
-                del rel_nodes[index]
-        self.base_poses = base_nodes
+                del rel_poses[index]
+        self.applied_rel_id_poses = base_poses
     
     def _parse_sensors(self, sensors):
         '''
@@ -782,133 +792,135 @@ class URDFModelParser(RobotModelParser):
             joint = self.robot['joints'][j]
             self.robot['links'][joint['child']]['parent'] = joint['parent']
             #print(joint['parent'] + ', ', end='')
+            
+        self.parseMaterials()
 
-        #now some debug output
-        with open(self.filepath+'_debug.yml', 'w') as outputfile:
-            outputfile.write(yaml.dump(self.robot))#, default_flow_style=False)) #last parameter prevents inline formatting for lists and dictionaries
-
-<<<<<<< HEAD
-        material_list = [] #TODO: build dictionary entry for materials
-=======
-        materiallist = [] #TODO: build dictionary entry for materials
->>>>>>> 12646ec5fb1754ff0d399835534ae72341373158
-        print("\n\nParsing materials..")
-        for material in self.root.iter('material'):
-            newmaterial = {a: material.attrib[a] for a in material.attrib}
-            color = material.find('color')
-            if color is not None:
-                #print(material.attrib['name'] + ', ', end='')
-                newmaterial['color'] = parse_text(color.attrib['rgba'])
-<<<<<<< HEAD
-                material_list.append(newmaterial)
-        for m in material_list:
-=======
-                materiallist.append(newmaterial)
-        for m in materiallist:
->>>>>>> 12646ec5fb1754ff0d399835534ae72341373158
-            materials.makeMaterial(m['name'], tuple(m['color'][0:3]), (1, 1, 1), m['color'][-1]) #TODO: handle duplicate names? urdf_robotname_xxx?
+        self._debug_output()
 
     def parseLink(self, link):
-        novisual = True
         #print(link.attrib['name'] + ', ', end='')
         newlink = {a: link.attrib[a] for a in link.attrib}
 
-        #parse 'inertial'
-        inertial = link.find('inertial')
+        self.parseInertial(newlink, link)
+        no_visual_geo = self.parseVisual(newlink, link)
+        no_collision_geo = self.parseCollision(newlink, link)
+        handle_missing_geometry(no_visual_geo, no_collision_geo, newlink)
+        
+        if newlink == {}:
+            print("\n### WARNING:", newlink['name'], "is empty.")
+        return newlink
+        
+    def parseInertial(self, link_dict, link_xml):
+        '''
+        '''
+        inertial = link_xml.find('inertial')
         if inertial is not None: # !!! 'if Element' yields none if the Element contains no children, thus this notation !!!
-            newlink['inertial'] = {}
+            inertial_dict = {}
             origin = inertial.find('origin')
             if origin is not None:
                 raw_pose = [float(num) for num in (origin.attrib['xyz'].split() + origin.attrib['rpy'].split())]
-                newlink['inertial']['pose'] = calc_pose_formats(raw_pose[:3], raw_pose[3:])
+                inertial_dict['pose'] = calc_pose_formats(raw_pose[:3], raw_pose[3:])
             else:
                 position, rotation = pos_rot_tree_to_lists(None, None)
-                newlink['inertial']['pose'] = calc_pose_formats(position, rotation)
+                inertial_dict['pose'] = calc_pose_formats(position, rotation)
             mass = inertial.find('mass')
             if mass is not None:
-                newlink['inertial']['mass'] = float(mass.attrib['value'])
+                inertial_dict['mass'] = float(mass.attrib['value'])
             inertia = inertial.find('inertia')
             if inertia is not None:
                 values = []
-                newlink['inertial']['inertia'] = values.append(inertia.attrib[a] for a in inertia.attrib)
-            newlink['inertial']['name'] = 'inertial_' + newlink['name']
-
-        #parse 'visual'
-        newlink['visual'] = {}
+                inertial_dict['inertia'] = values.append(inertia.attrib[a] for a in inertia.attrib)
+            inertial_dict['name'] = 'inertial_' + link_dict['name']
+            
+            link_dict['inertial'] = inertial_dict
+            
+    def parseVisual(self, link_dict, link_xml):
+        '''
+        '''
+        visual_dict = {}
+        no_vis_geo = []
         i=0
-        for visual in link.iter('visual'):
+        for visual_xml in link_xml.iter('visual'):
             try:
-                visname = visual.attrib['name']
+                visname = visual_xml.attrib['name']
             except KeyError:
-                visname = 'visual_' + str(i) + '_' + newlink['name']
+                visname = 'visual_' + str(i) + '_' + link_dict['name']
                 i += 1
-            newlink['visual'][visname] = {a: visual.attrib[a] for a in visual.attrib}
-            vis = newlink['visual'][visname]
-            vis['name'] = visname
-            origin = visual.find('origin')
+            visual_dict[visname] = {a: visual_xml.attrib[a] for a in visual_xml.attrib}
+            vis_dict = visual_dict[visname]
+            vis_dict['name'] = visname
+            origin = visual_xml.find('origin')
             if origin is not None:
                  raw_pose = [float(num) for num in (origin.attrib['xyz'].split() + origin.attrib['rpy'].split())]
-                 vis['pose'] = calc_pose_formats(raw_pose[:3], raw_pose[3:])
+                 vis_dict['pose'] = calc_pose_formats(raw_pose[:3], raw_pose[3:])
             else:
-                vis['pose'] = calc_pose_formats(None, None)
-            geometry = visual.find('geometry')
-            if geometry is not None:
-                vis['geometry'] = {a: parse_text(geometry[0].attrib[a]) for a in geometry[0].attrib}
-                vis['geometry']['geometryType'] = geometry[0].tag
-                novisual = False
-                if geometry[0].tag == 'mesh':
-                    vis['geometry']['filename'] = geometry[0].attrib['filename'] #TODO: remove this, also from export, as it is double
-            else: #if geometry is None
-                print("\n### WARNING: No geometry information for visual element, trying to parse from collision data.")
-            material = visual.find('material')
+                vis_dict['pose'] = calc_pose_formats(None, None)
+                
+            if not self.parseGeometry(vis_dict, visual_xml):
+                no_vis_geo.append(visname)
+            
+            material = visual_xml.find('material')
             if material is not None:
-                vis['material'] = {'name': material.attrib['name']}
+                vis_dict['material'] = {'name': material.attrib['name']}
                 color = material.find('color')
                 if color is not None:
-                    vis['material']['color'] = parse_text(color.attrib['rgba'])
+                    vis_dict['material']['color'] = parse_text(color.attrib['rgba'])
             else:
-                vis['material'] = {'name':'None'} #TODO: this is a hack!
-                print("\n### Warning: No material provided for link", newlink['name'])
-        if newlink['visual'] == {}: #'else' cannot be used as we don't use a break
-            del(newlink['visual'])
-            print("\n### WARNING: No visual information provided for link", newlink['name'])
-
-        #parse 'collision'
-        newlink['collision'] = {}
+                vis_dict['material'] = {'name':'None'} #TODO: this is a hack!
+                print("\n### Warning: No material provided for link", link_dict['name'])
+                
+        if visual_dict == {}: #'else' cannot be used as we don't use a break
+            print("\n### WARNING: No visual information provided for link", link_dict['name'])
+        else:
+            link_dict['visual'] = visual_dict
+        return no_vis_geo
+        
+    def parseCollision(self, link_dict, link_xml):
+        '''
+        '''
+        collision_dict = {}
+        no_coll_geo = []
         i=0
-        for collision in link.iter('collision'):
+        for collision_xml in link_xml.iter('collision'):
             try:
-                colname = collision.attrib['name']
+                colname = collision_xml.attrib['name']
             except KeyError:
-                colname = 'collision_' + str(i) + '_' + newlink['name']
+                colname = 'collision_' + str(i) + '_' + link_dict['name']
                 i += 1
-            newlink['collision'][colname] = {a: collision.attrib[a] for a in collision.attrib}
-            col = newlink['collision'][colname]
-            col['name'] = colname
-            origin = collision.find('origin')
+            collision_dict[colname] = {a: collision_xml.attrib[a] for a in collision_xml.attrib}
+            col_dict = collision_dict[colname]
+            col_dict['name'] = colname
+            origin = collision_xml.find('origin')
             if origin is not None:
                 raw_pose = [float(num) for num in (origin.attrib['xyz'].split() + origin.attrib['rpy'].split())]
-                col['pose'] = calc_pose_formats(raw_pose[:3], raw_pose[3:])
+                col_dict['pose'] = calc_pose_formats(raw_pose[:3], raw_pose[3:])
             else:
-                col['pose'] = calc_pose_formats(None, None)
-            geometry = collision.find('geometry')
-            if geometry is not None:
-                col['geometry'] = {a: parse_text(geometry[0].attrib[a]) for a in geometry[0].attrib}
-                col['geometry']['geometryType'] = geometry[0].tag
-                if geometry[0].tag == 'mesh':
-                    col['geometry']['filename'] = geometry[0].attrib['filename']
-                #if novisual:
-                #    newlink['visual']['geometry'] = col['geometry']
+                col_dict['pose'] = calc_pose_formats(None, None)
+
+            if not self.parseGeometry(col_dict, collision_xml):
+                no_coll_geo.append(colname)
+            
+            if collision_dict == {}:
+               print("\n### WARNING: No collision information provided for link", link_dict['name'])
             else:
-                print("\n### WARNING: No collision geometry information provided for link", newlink['name'] + '.')
-                if novisual:
-                    print("\n### WARNING:", newlink['name'], "is empty.")
-        if newlink['collision'] == {}: #'else' cannot be used as we don't use a break
-            del(newlink['collision'])
-            print("\n### WARNING: No collision information provided for link", newlink['name'] + '.')
-            if novisual:
-                print("\n### WARNING:", newlink['name'], "is empty.")
-        return newlink
+                link_dict['collision'] = collision_dict
+        return no_coll_geo
+        
+    def parseGeometry(self, vis_coll_dict, vis_coll_xml):
+        '''
+        '''
+        geometry_xml = vis_coll_xml.find('geometry')
+        if geometry_xml is not None:
+            got_geometry = True
+            geometry_dict = {a: parse_text(geometry_xml[0].attrib[a]) for a in geometry_xml[0].attrib}
+            geometry_dict['geometryType'] = geometry_xml[0].tag
+            if geometry_xml[0].tag == 'mesh':
+                geometry_dict['filename'] = geometry_xml[0].attrib['filename'] #TODO: remove this, also from export, as it is double
+            vis_coll_dict['geometry'] = geometry_dict
+        else:
+            no_geometry = False
+        return got_geometry
+        
 
     def parseJoint(self, joint):
         #print(joint.attrib['name']+', ', end='')
@@ -920,12 +932,8 @@ class URDFModelParser(RobotModelParser):
             origindict = {'xyz': [0, 0, 0], 'rpy': [0, 0, 0]}
         newjoint['parent'] = joint.find('parent').attrib['link']
         newjoint['child'] = joint.find('child').attrib['link']
-<<<<<<< HEAD
         raw_pose = [float(num) for num in (origin.attrib['xyz'].split() + origin.attrib['rpy'].split())]
         pose = calc_pose_formats(raw_pose[:3], raw_pose[3:])
-=======
-        pose = [float(num) for num in (origindict['xyz'] + origindict['rpy'])]
->>>>>>> 12646ec5fb1754ff0d399835534ae72341373158
         #axis
         #calibration
         #dynamics
@@ -933,6 +941,21 @@ class URDFModelParser(RobotModelParser):
         #mimic
         #safety_controller
         return newjoint, pose
+        
+    def parseMaterials(self):
+        '''
+        '''
+        material_list = [] #TODO: build dictionary entry for materials
+        print("\n\nParsing materials..")
+        for material in self.root.iter('material'):
+            newmaterial = {a: material.attrib[a] for a in material.attrib}
+            color = material.find('color')
+            if color is not None:
+                newmaterial['color'] = parse_text(color.attrib['rgba'])
+                material_list.append(newmaterial)
+        for m in material_list:
+            #TODO: handle duplicate names? urdf_robotname_xxx?
+            materials.makeMaterial(m['name'], tuple(m['color'][0:3]), (1, 1, 1), m['color'][-1]) 
 
 class SMURFModelParser(RobotModelParser):
     """Class derived from RobotModelParser which parses a SMURF model"""
@@ -986,6 +1009,7 @@ class RobotModelImporter(bpy.types.Operator):
         else:
             print("Unknown model format, aborting import...")
 
+        cleanUpScene()
         importer.parseModel()
         importer.createBlenderModel()
 
