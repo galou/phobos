@@ -84,24 +84,37 @@ def calc_pose_formats(position, rotation):
     test cases with None parameters
     '''
     px, py, pz = position
-    rw, rx, ry, rz = rotation
+    if len(rotation) == 3:
+        rot = mathutils.Euler(rotation).to_quaternion()
+    else:
+        rot = rotation
+    rw, rx, ry, rz = rot
     pose_dict = {}
     
     translation = [px, py, pz]
     quaternion = mathutils.Quaternion([rw, rx, ry, rz])
     euler = quaternion.to_euler()
-    pose_dict['translation'] = mathutils.Matrix.Translation(translation)
+    pose_dict['translation'] = translation #mathutils.Matrix.Translation(translation)
     pose_dict['rotation_quaternion'] = [rw, rx, ry, rz]
     pose_dict['rotation_euler'] = [euler.x, euler.y, euler.z]
     rm = quaternion.to_matrix()
-    #matrix = [[rm[0][0], rm[1][0], rm[2][0], px],
-    #          [rm[0][1], rm[1][1], rm[2][1], py],
-    #          [rm[0][2], rm[1][2], rm[2][2], pz],
-    #          [0,        0,        0,        1]]
+    matrix = [[rm[0][0], rm[1][0], rm[2][0], px],
+              [rm[0][1], rm[1][1], rm[2][1], py],
+              [rm[0][2], rm[1][2], rm[2][2], pz],
+              [0,        0,        0,        1]]
     
-    pose_dict['matrix'] = rm.to_4x4()
+    pose_dict['matrix'] = matrix #rm.to_4x4()
     
     return pose_dict
+    
+def add_quaternion(rot1, rot2):
+    '''
+    Add two rotations in euler angle format.
+    '''
+    quat1 = mathutils.Quaternion(rot1)
+    quat2 = mathutils.Quaternion(rot2)
+    quat_sum = quat1 * quat2
+    return (quat_sum.w, quat_sum.x, quat_sum.y, quat_sum.z)
 
 class RobotModelParser():
     """Base class for a robot model file parser of a specific type"""
@@ -112,7 +125,7 @@ class RobotModelParser():
         self.robot = {}
 
     def placeChildLinks(self, parent):
-        print(parent['name']+ ', ', end='')
+        #print(parent['name']+ ', ', end='')
         children = []
         for l in self.robot['links']:
             if 'parent' in self.robot['links'][l] and self.robot['links'][l]['parent'] == parent['name']:
@@ -129,8 +142,8 @@ class RobotModelParser():
             # 2: move to parents origin by setting the world matrix to the parents world matrix
             childLink.matrix_world = parentLink.matrix_world
             # 3: apply local transform as saved in urdf (change matrix_local from identity to urdf)
-            urdf_loc = child['pose']['translation']
-            urdf_rot = child['pose']['matrix']
+            urdf_loc = mathutils.Matrix.Translation(child['pose']['translation'])
+            urdf_rot = mathutils.Matrix(child['pose']['matrix']).to_4x4()
             urdfmatrix = urdf_loc * urdf_rot
             childLink.matrix_local = urdfmatrix
             # 4: be happy, as world and basis are now the same and local is the transform to be exported to urdf
@@ -144,13 +157,13 @@ class RobotModelParser():
         parentLink = bpy.data.objects[link['name']]
         if 'inertial' in link:
             if 'pose' in link['inertial']:
-                urdf_geom_loc = link['inertial']['pose']['translation']
-                urdf_geom_rot = link['inertial']['pose']['matrix']
+                urdf_geom_loc = mathutils.Matrix.Translation(link['inertial']['pose']['translation'])
+                urdf_geom_rot = mathutils.Matrix(link['inertial']['pose']['matrix']).to_4x4()
             else:
                 urdf_geom_loc = mathutils.Matrix.Identity(4)
                 urdf_geom_rot = mathutils.Matrix.Identity(4)
-            print(link['name'], link['inertial'])
-            print(link['inertial']['name'])
+            #print(link['name'], link['inertial'])
+            #print(link['inertial']['name'])
             geoname = link['inertial']['name'] #g
             geom = bpy.data.objects[geoname]
             bpy.ops.object.select_all(action="DESELECT")
@@ -160,15 +173,18 @@ class RobotModelParser():
             bpy.ops.object.parent_set(type='BONE_RELATIVE')
             #geom.matrix_world = parentLink.matrix_world #FIXME: this applies the scale of the parent, making boxes BIIIG
             geom.matrix_local = urdf_geom_loc * urdf_geom_rot
+        stream = open(self.filepath+'current_link.yml', 'w')
+        yaml.dump(link, stream)
+        stream.close()
         for geomsrc in ['visual', 'collision']:
             if geomsrc in link:
                 for g in link[geomsrc]:
                     geom = link[geomsrc][g]
-                    print([key for key in geom])
+                    #print([key for key in geom])
                     if 'pose' in geom:
-                        print('geom:', geom)
-                        urdf_geom_loc = geom['pose']['translation']
-                        urdf_geom_rot = geom['pose']['matrix']
+                        #print('geom:', geom)
+                        urdf_geom_loc = mathutils.Matrix.Translation(geom['pose']['translation'])
+                        urdf_geom_rot = mathutils.Matrix(geom['pose']['matrix']).to_4x4()
                     else:
                         urdf_geom_loc = mathutils.Matrix.Identity(4)
                         urdf_geom_rot = mathutils.Matrix.Identity(4)
@@ -194,12 +210,22 @@ class RobotModelParser():
                 obj.tag = True
             if geomtype == 'mesh':
                 filetype = geom['filename'].split('.')[-1]
+                print(geom['filename'])
                 if filetype == 'obj' or filetype == 'OBJ':
                     bpy.ops.import_scene.obj(filepath=os.path.join(self.path, geom['filename']))
                 elif filetype == 'stl' or filetype == 'STL':
                     bpy.ops.import_mesh.stl(filepath=os.path.join(self.path, geom['filename']))
+                # hack for test:
+                elif filetype == 'bobj' or filetype == 'BOBJ':
+                    filename = 'visual_' + geom['filename'].split('.')[0] + '.obj'
+                    bpy.ops.import_scene.obj(filepath=os.path.join(self.path, filename))
+                else:
+                    print('ERROR: Could not import object.')
                 # find the newly imported obj
+                print('new object name:', viscol['name'])
+                print("existing objects' names:")
                 for obj in bpy.data.objects:
+                    print(obj.name)
                     if not obj.tag:
                         newgeom = obj
                         #with obj file import, blender only turns the object, not the vertices,
@@ -263,6 +289,7 @@ class RobotModelParser():
         newlink.name = link['name']
         newlink.location = (0.0, 0.0, 0.0)
         newlink.scale = (0.3, 0.3, 0.3) #TODO: make this depend on the largest visual or collision object
+        #newlink.scale = (1, 0.1, 0.01)
         bpy.ops.object.transform_apply(scale=True)
         newlink.MARStype = 'link'
         if newlink.name != link['name']:
@@ -288,9 +315,9 @@ class RobotModelParser():
         """Creates the blender object representation of the imported model."""
         print("\n\nCreating Blender model...")
         for l in self.robot['links']:
-            print(l + ', ', end='')
+            #print(l + ', ', end='')
             link = self.robot['links'][l]
-            print(link['name'])
+            #print(link['name'])
             self.createLink(link)
 
         #build tree recursively and correct translation & rotation on the fly
@@ -347,7 +374,7 @@ class MARSModelParser(RobotModelParser):
         self._parse_additional_visuals_and_collisions(self.robot, nodes)
         
         with open(self.filepath+'_debug.yml', 'w') as outputfile:
-            outputfile.write(yaml.dump(self.robot))
+            yaml.dump(self.robot, outputfile)
             
         print(self.robot)
     
@@ -360,11 +387,14 @@ class MARSModelParser(RobotModelParser):
             child = int(joint.find('nodeindex2').text)
             self.link_indices.update([child])
         
-    def _parse_materials(self, materials):
+    def _parse_materials(self, materials_tree):
         '''
         Parse the materials from the MARS scene.
+        
+        TODO: change 'materials' so that superfluous 'color' entry is not needed
         '''
-        for material in materials:
+        material_list = []
+        for material in materials_tree:
             material_dict = {}
             mat_id = int(material.find('id').text)
             
@@ -384,6 +414,9 @@ class MARSModelParser(RobotModelParser):
                     a = round_float(colour.find('a').text)
                     py_colour = defs.MARSrevlegdict[xml_colour]
                     material_dict[py_colour] = [r, g, b, a]
+                    # for now:
+                    material_dict['color'] = [r, g, b, a]
+            
             
             transparency = material.find('transparency')
             if transparency is not None:
@@ -394,6 +427,12 @@ class MARSModelParser(RobotModelParser):
             material_dict['shininess'] = round_float(material.find('shininess').text)
                 
             self.material_indices[mat_id] = material_dict
+            
+        # solution for now; there is a better solution plus this is duplicate code:
+            material_list.append(material_dict)
+            
+        for m in material_list:
+            materials.makeMaterial(m['name'], tuple(m['color'][0:3]), (1, 1, 1), m['color'][-1])
     
     def _parse_geometry(self, node, mode):
         '''
@@ -402,11 +441,16 @@ class MARSModelParser(RobotModelParser):
         size = None
         if mode == 'visual':
             size = node.find('visualsize')
+            mesh_file = node.find('filename')
+            if mesh_file is not None:
+                geometry_type = 'mesh'
+            else:
+                geometry_type = node.find('physicmode').text
         elif mode == 'collision':
             size = node.find('extend')
+            geometry_type = node.find('physicmode').text
         
         geometry_dict = {}
-        geometry_type = node.find('physicmode').text
         geometry_dict['geometryType'] = geometry_type
         
         if geometry_type == 'box' or geometry_type == 'mesh':
@@ -415,7 +459,7 @@ class MARSModelParser(RobotModelParser):
             z = round_float(size.find('z').text)
             geometry_dict['size'] = [x, y, z]
             if geometry_type == 'mesh':
-                filename = node.find('origname').text
+                filename = node.find('filename').text
                 geometry_dict['filename'] = filename
         elif geometry_type == 'sphere' or geometry_type == 'cylinder' or geometry_type == 'capsule':
             radius = round_float(size.find('x').text) / 2.0
@@ -433,14 +477,20 @@ class MARSModelParser(RobotModelParser):
         '''
         '''
         visual_dict = {}
-        name = node.get('name')
+        name = 'visual_' + node.get('name')
         visual_dict['name'] = name
         index = int(node.find('index').text)
         
         visual_position = node.find('visualposition')
+        if visual_position is None:
+            visual_position = node.find('position')
         visual_rotation = node.find('visualrotation')
+        if visual_rotation is None:
+            visual_rotation = node.find('rotation')
         position, rotation = pos_rot_tree_to_lists(visual_position, visual_rotation)
-        visual_dict['pose'] = calc_pose_formats(position, rotation)
+        #visual_dict['pose'] = calc_pose_formats(position, rotation)
+        
+        visual_dict['pose'] = self.base_poses[index]['pose']
         
         mat_index = int(node.find('material_id').text)
         visual_dict['material'] = self.material_indices[mat_index]
@@ -452,14 +502,21 @@ class MARSModelParser(RobotModelParser):
         
     def _parse_collision(self, collisions_dict, node):
         '''
-        max_contacts not in example. can it occur?
         '''
         collision_dict = {}
-        name = node.get('name')
+        name = 'collision_' + node.get('name')
         collision_dict['name'] = name
         index = int(node.find('index').text)
-        print('base_poses:', self.base_poses)
-        collision_dict['pose'] = self.base_poses[index]
+        #print('base_poses:', self.base_poses)
+        #print('collision_pose:', self.base_poses[index])
+        
+        
+        collision_position = node.find('position')
+        collision_rotation = node.find('rotation')
+        position, rotation = pos_rot_tree_to_lists(collision_position, collision_rotation)
+        collision_dict['pose'] = calc_pose_formats(position, rotation)
+        
+        #collision_dict['pose'] = self.base_poses[index]['pose']
         
         bitmask = int(float(node.find('coll_bitmask').text))
         collision_dict['bitmask'] = bitmask
@@ -472,6 +529,39 @@ class MARSModelParser(RobotModelParser):
             collision_dict['max_contacts'] = int(max_contacts.text)
         
         collisions_dict[name] = collision_dict
+        
+    def _parse_inertial(self, link_dict, node):
+        '''
+        pose in inertia does not seem to be available
+        '''
+        inertial_dict = {}
+        
+        mass = node.find('mass')
+        if mass is not None:
+            inertial_dict['mass'] = round_float(mass.text)
+        
+        inertia = node.find('inertia')
+        ## if no inertia provided use identity matrix
+        #if inertia is None or not bool(inertia.text):
+        #    inertial_dict['inertia'] = [1.0, 0.0, 0.0,
+        #                                     1.0, 0.0,
+        #                                          1.0]
+        if inertia is not None and bool(inertia.text):  # 'inertia' states whether the defined inertia values are to be used
+            i00 = round_float(node.find('i00').text)
+            i01 = round_float(node.find('i01').text)
+            i02 = round_float(node.find('i02').text)
+            i11 = round_float(node.find('i11').text)
+            i12 = round_float(node.find('i12').text)
+            i22 = round_float(node.find('i22').text)
+            inertial_dict['inertia'] = [i00, i01, i02,
+                                             i11, i12,
+                                                  i22]
+                                
+        if inertial_dict is not {}:
+            position, rotation = pos_rot_tree_to_lists(None, None)
+            inertial_dict['pose'] = calc_pose_formats(position, rotation)
+            inertial_dict['name'] = 'inertial_' + node.get('name')
+            link_dict['inertial'] = inertial_dict
         
     
     def _parse_links(self, nodes):
@@ -497,7 +587,7 @@ class MARSModelParser(RobotModelParser):
                 #link_dict['filename'] = node.find('filename').text
                 link_dict['name'] = node.attrib['name']
                 
-                pose = self.base_poses[index]
+                pose = self.base_poses[index]['pose']
                 link_dict['pose'] = pose
                 
                 visuals_dict = {}
@@ -508,26 +598,8 @@ class MARSModelParser(RobotModelParser):
                 self._parse_collision(collisions_dict, node)
                 link_dict['collision'] = collisions_dict
                 
-                inertial_dict = {}
-                mass = round_float(node.find('mass').text)
-                inertial_dict['mass'] = mass
-                inertia = node.find('inertia')
+                inertial_dict = self._parse_inertial(link_dict, node)
                 
-                # if no inertia provided use identity matrix
-                if inertia is None or not bool(inertia.text):
-                    inertial_dict['inertia'] = [1.0, 0.0, 0.0,
-                                                     1.0, 0.0,
-                                                          1.0]
-                else:
-                    i00 = round_float(node.find('i00').text)
-                    i01 = round_float(node.find('i01').text)
-                    i02 = round_float(node.find('i02').text)
-                    i11 = round_float(node.find('i11').text)
-                    i12 = round_float(node.find('i12').text)
-                    i22 = round_float(node.find('i22').text)
-                    inertial_dict['inertia'] = [i00, i01, i02,
-                                                     i11, i12,
-                                                          i22]
                 links_dict[name] = link_dict
                 
             else:
@@ -577,22 +649,27 @@ class MARSModelParser(RobotModelParser):
         '''
         seems to work but not well-tested yet
         '''
-        base_nodes = {}
+        base_nodes = {}     # poses with references already applied plus raw pos and rot values for easier calculations
         rel_nodes = {}
         for node in nodes:
             index = int(node.find('index').text)
             xml_position = node.find('position')
             xml_rotation = node.find('rotation')
             position, rotation = pos_rot_tree_to_lists(xml_position, xml_rotation)
-            print('position:', position)
-            print('rotation:', rotation)
+            #print('position:', position)
+            #print('rotation:', rotation)
             pose = calc_pose_formats(position, rotation)
             if node.find('relativeid') is not None:
-                node_dict = {'pose': pose,
-                             'rel_id': int(node.find('relativeid').text)}
-                rel_nodes[index] = node_dict
+                rel_node_dict = {'pose': pose,
+                             'rel_id': int(node.find('relativeid').text),
+                             'raw_pos': position,
+                             'raw_rot': rotation}
+                rel_nodes[index] = rel_node_dict
             else:
-                base_nodes[index] = pose
+                base_node_dict = {'pose': pose,
+                                  'raw_pos': position,
+                                  'raw_rot': rotation}
+                base_nodes[index] = base_node_dict
         num_rel_nodes = -1
         while rel_nodes:        
             to_delete = []
@@ -604,12 +681,15 @@ class MARSModelParser(RobotModelParser):
                 rel_node = rel_nodes[rel_index]
                 base = rel_node['rel_id']
                 if base in base_nodes:
-                    base_pose = base_nodes[base]
+                    base_pose = base_nodes[base]['pose']
                     rel_pose = rel_node['pose']
-                    applied_pose = []
-                    for bp, rp in zip(base_pose, rel_pose):
-                        applied_pose.append(bp+rp)
-                    base_nodes[rel_index] = applied_pose
+                    applied_pos = [bp+rp for bp, rp in zip(base_nodes[base]['raw_pos'], rel_node['raw_pos'])]
+                    applied_rot = add_quaternion(base_nodes[base]['raw_rot'], rel_node['raw_rot'])
+                    #applied_rot = [br+rr for br, rr in zip(base_nodes[base]['raw_rot'], rel_node['raw_rot'])]
+                    #applied_rot = rel_node['raw_rot']
+                    base_nodes[rel_index] = {'pose': calc_pose_formats(applied_pos, applied_rot),
+                                             'raw_pos': applied_pos,
+                                             'raw_rot': applied_rot}
                     to_delete.append(rel_index)
             for index in to_delete:
                 del rel_nodes[index]
@@ -626,6 +706,7 @@ class MARSModelParser(RobotModelParser):
             sensor_dict['link'] = None  # where to get this?
             sensor_dict['sensorType'] = sensor.get('type')
             sensors_dict[name] = sensor_dict
+        return sensors_dict
     
     def _parse_motors(self, motors):
         '''
@@ -678,7 +759,8 @@ class URDFModelParser(RobotModelParser):
         #find any links that still have no pose (most likely because they had no parent)
         for link in links:
             if not 'pose' in links[link]:
-                links[link]['pose'] = calc_pose_formats(None, None)
+                position, rotation = pos_rot_tree_to_lists(None, None)
+                links[link]['pose'] = calc_pose_formats(position, rotation)
             #print(link, links[link]['pose'])
 
         #write parent-child information to nodes
@@ -686,27 +768,27 @@ class URDFModelParser(RobotModelParser):
         for j in self.robot['joints']:
             joint = self.robot['joints'][j]
             self.robot['links'][joint['child']]['parent'] = joint['parent']
-            print(joint['parent'] + ', ', end='')
+            #print(joint['parent'] + ', ', end='')
 
         #now some debug output
         with open(self.filepath+'_debug.yml', 'w') as outputfile:
             outputfile.write(yaml.dump(self.robot))#, default_flow_style=False)) #last parameter prevents inline formatting for lists and dictionaries
 
-        materials = [] #TODO: build dictionary entry for materials
+        material_list = [] #TODO: build dictionary entry for materials
         print("\n\nParsing materials..")
         for material in self.root.iter('material'):
             newmaterial = {a: material.attrib[a] for a in material.attrib}
             color = material.find('color')
             if color is not None:
-                print(material.attrib['name'] + ', ', end='')
+                #print(material.attrib['name'] + ', ', end='')
                 newmaterial['color'] = parse_text(color.attrib['rgba'])
-                materials.append(newmaterial)
-        for m in materials:
+                material_list.append(newmaterial)
+        for m in material_list:
             materials.makeMaterial(m['name'], tuple(m['color'][0:3]), (1, 1, 1), m['color'][-1]) #TODO: handle duplicate names? urdf_robotname_xxx?
 
     def parseLink(self, link):
         novisual = True
-        print(link.attrib['name'] + ', ', end='')
+        #print(link.attrib['name'] + ', ', end='')
         newlink = {a: link.attrib[a] for a in link.attrib}
 
         #parse 'inertial'
@@ -718,7 +800,8 @@ class URDFModelParser(RobotModelParser):
                 raw_pose = [float(num) for num in (origin.attrib['xyz'].split() + origin.attrib['rpy'].split())]
                 newlink['inertial']['pose'] = calc_pose_formats(raw_pose[:3], raw_pose[3:])
             else:
-                newlink['inertial']['pose'] = calc_pose_formats(None, None)
+                position, rotation = pos_rot_tree_to_lists(None, None)
+                newlink['inertial']['pose'] = calc_pose_formats(position, rotation)
             mass = inertial.find('mass')
             if mass is not None:
                 newlink['inertial']['mass'] = float(mass.attrib['value'])
@@ -806,7 +889,7 @@ class URDFModelParser(RobotModelParser):
         return newlink
 
     def parseJoint(self, joint):
-        print(joint.attrib['name']+', ', end='')
+        #print(joint.attrib['name']+', ', end='')
         newjoint = {a: joint.attrib[a] for a in joint.attrib}
         origin = joint.find('origin')
         newjoint['parent'] = joint.find('parent').attrib['link']

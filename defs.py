@@ -136,7 +136,10 @@ layerTypes = {
               }
 
 MARSlegacydict = {'specularColor': 'specularFront',
-                  'diffuseColor': 'diffuseFront',
-                  'ambientColor': 'ambientFront',
-                  'emissionColor': 'emissionFront'
+                    'diffuseColor': 'diffuseFront',
+                    'ambientColor': 'ambientFront',
+                    'emissionColor': 'emissionFront'
                   }
+                  
+MARSrevlegdict = {MARSlegacydict[key]: key for key in MARSlegacydict}
+
