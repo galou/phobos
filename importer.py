@@ -69,12 +69,14 @@ def cleanUpScene():
 
 def round_float(float_as_str, decimal=6):
     '''
-    does not seem to work right for some reason
+    Cast 'float_as_str' to float and round to 'decimal' decimal places.
     '''
     return round(float(float_as_str), decimal)
     
 def pos_rot_tree_to_lists(position, rotation):
     '''
+    Convert the xml representations of a position and a rotation to
+    lists. If either is 'None', return a list of zeroes instead.
     '''
     if position:
         px = round_float(position.find('x').text)
@@ -94,7 +96,12 @@ def pos_rot_tree_to_lists(position, rotation):
         
 def calc_pose_formats(position, rotation):
     '''
-    test cases with None parameters
+    Create a dictionary containing various representations of the pose
+    represented by 'position' and 'rotation':
+        - translation == position
+        - rotation_quaternion == rotation
+        - rotation_euler: euler angles
+        - matrix: position and rotation in 4x4 matrix form
     '''
     px, py, pz = position
     if len(rotation) == 3:
@@ -179,12 +186,12 @@ class RobotModelParser():
             bpy.context.scene.objects.active = parentLink
             bpy.ops.object.parent_set(type='BONE_RELATIVE')
             # 2: move to parents origin by setting the world matrix to the parents world matrix
-            childLink.matrix_world = parentLink.matrix_world
+            childLink.matrix_world = parentLink.matrix_world        # removing this line does not seem to make a difference
             # 3: apply local transform as saved in urdf (change matrix_local from identity to urdf)
-            urdf_loc = mathutils.Matrix.Translation(child['pose']['translation'])
-            urdf_rot = mathutils.Matrix(child['pose']['matrix']).to_4x4()
-            urdfmatrix = urdf_loc * urdf_rot
-            childLink.matrix_local = urdfmatrix
+            location = mathutils.Matrix.Translation(child['pose']['translation'])
+            rotation = mathutils.Matrix(child['pose']['matrix']).to_4x4()
+            transform_matrix = location * rotation
+            childLink.matrix_local = transform_matrix
             # 4: be happy, as world and basis are now the same and local is the transform to be exported to urdf
             # 5: take care of the rest of the tree
             self.placeChildLinks(child)
@@ -196,22 +203,22 @@ class RobotModelParser():
         parentLink = bpy.data.objects[link['name']]
         if 'inertial' in link:
             if 'pose' in link['inertial']:
-                urdf_geom_loc = mathutils.Matrix.Translation(link['inertial']['pose']['translation'])
-                urdf_geom_rot = mathutils.Matrix(link['inertial']['pose']['matrix']).to_4x4()
+                inertial_loc = mathutils.Matrix.Translation(link['inertial']['pose']['translation'])
+                inertial_rot = mathutils.Matrix(link['inertial']['pose']['matrix']).to_4x4()
             else:
-                urdf_geom_loc = mathutils.Matrix.Identity(4)
-                urdf_geom_rot = mathutils.Matrix.Identity(4)
+                inertial_loc = mathutils.Matrix.Identity(4)
+                inertial_rot = mathutils.Matrix.Identity(4)
             #print(link['name'], link['inertial'])
             #print(link['inertial']['name'])
-            geoname = link['inertial']['name'] #g
-            geom = bpy.data.objects[geoname]
+            inertial_name = link['inertial']['name'] #g
+            inertial_obj = bpy.data.objects[inertial_name]
             bpy.ops.object.select_all(action="DESELECT")
-            geom.select = True
+            inertial_obj.select = True
             parentLink.select = True
             bpy.context.scene.objects.active = parentLink
             bpy.ops.object.parent_set(type='BONE_RELATIVE')
-            #geom.matrix_world = parentLink.matrix_world #FIXME: this applies the scale of the parent, making boxes BIIIG
-            geom.matrix_local = urdf_geom_loc * urdf_geom_rot
+            #inertial_obj.matrix_world = parentLink.matrix_world #FIXME: this applies the scale of the parent, making boxes BIIIG
+            inertial_obj.matrix_local = inertial_loc * inertial_rot
         for geomsrc in ['visual', 'collision']:
             if geomsrc in link:
                 for g in link[geomsrc]:
@@ -225,14 +232,14 @@ class RobotModelParser():
                         vis_coll_loc = mathutils.Matrix.Identity(4)
                         vis_coll_rot = mathutils.Matrix.Identity(4)
                     vis_coll_name = vis_coll['name'] #g
-                    geom = bpy.data.objects[vis_coll_name]
+                    vis_coll_obj = bpy.data.objects[vis_coll_name]
                     bpy.ops.object.select_all(action="DESELECT")
-                    geom.select = True
+                    vis_coll_obj.select = True
                     parentLink.select = True
                     bpy.context.scene.objects.active = parentLink
                     bpy.ops.object.parent_set(type='BONE_RELATIVE')
-                    geom.matrix_world = parentLink.matrix_world
-                    geom.matrix_local = vis_coll_loc * vis_coll_rot
+                    vis_coll_obj.matrix_world = parentLink.matrix_world
+                    vis_coll_obj.matrix_local = vis_coll_loc * vis_coll_rot
 
     def createGeometry(self, viscol, geomsrc):
         newgeom = None
@@ -271,6 +278,7 @@ class RobotModelParser():
                             newgeom.select = True
                             bpy.ops.object.transform_apply(rotation=True)
                 newgeom.name = viscol['name']
+                newgeom.layers = defLayers([defs.layerTypes[geomsrc]])
             elif geomtype == 'box':
                 newgeom = createPrimitive(viscol['name'],
                                           geomtype,
@@ -379,17 +387,39 @@ class MARSModelParser(RobotModelParser):
     """Class derived from RobotModelParser which parses a MARS scene"""
 
     def __init__(self, filepath):
+        '''
+        Initialise a 'MARSModelParser' object and a number of containers
+        used to keep track of the parsed information and to apply it in
+        the right places.
+        
+        Explanation of some of the containers:
+            - self.link_index_dict:
+                {link index: link name}
+            - self.link_indices:
+                set of all indices of xml nodes that are links
+            - self.material_indices:
+                {material index: dictionary containing material information}
+            - self.applied_rel_id_poses:
+                {link id: dictionary containing pose with parent pose
+                          applied plus raw pos and rot values for easier
+                          calculations}
+            - self.name_counter_dict:
+                {link/visual/collision/material name:
+                 amount of how often the name already has been given to
+                 something (plus index for distinction)}
+        '''
         RobotModelParser.__init__(self, filepath)
         
         self.xml_tree = None
         self.link_index_dict = {}
         self.link_groups = {}
-        self.material_indices = {}
         self.link_indices = set([])
+        self.material_indices = {}
         self.vis_coll_groups = {}
         self.applied_rel_id_poses = {}
         self.missing_vis_geos = {}
         self.missing_coll_geos = {}
+        self.name_counter_dict = {}
 
     def parseModel(self):
         '''
@@ -409,7 +439,9 @@ class MARSModelParser(RobotModelParser):
         self._get_links(nodes, joints)
         self._parse_materials(materials)
         
-        self.robot['links'] = self._parse_links(nodes)
+        links = self._parse_links(nodes)
+        self._add_parent_links(links)
+        self.robot['links'] = links
         self.robot['joints'] = self._parse_joints(joints)
         self.robot['sensors'] = self._parse_sensors(sensors)
         #self.robot['motors'] = self._parse_motors(motors)
@@ -421,9 +453,12 @@ class MARSModelParser(RobotModelParser):
             handle_missing_geometry(self.missing_vis_geos[link], self.missing_coll_geos[link], self.robot['links'][link])
         
         self._debug_output()
+        print(self.link)
     
     def _get_links(self, nodes, joints):
         '''
+        Collect the indices of all nodes that are links inside
+        'self.link_indices'
         '''
         for joint in joints:
             parent = int(joint.find('nodeindex1').text)
@@ -444,7 +479,7 @@ class MARSModelParser(RobotModelParser):
             
             # check needs to be explicit for future versions
             if material.find('name') is not None:
-                name = material.find('name').text
+                name = self._get_distinct_name(material.find('name').text)
             else:
                 name = 'material_' + str(mat_id)
             material_dict['name'] = name
@@ -477,6 +512,7 @@ class MARSModelParser(RobotModelParser):
     
     def _parse_geometry(self, vis_coll_dict, node, mode):
         '''
+        Parse the geometry of a visual or collision object.
         '''
         size = None
         if mode == 'visual':
@@ -520,9 +556,10 @@ class MARSModelParser(RobotModelParser):
     
     def _parse_visual(self, visuals_dict, node, missing_vis_geo):
         '''
+        Parse a visual object.
         '''
         visual_dict = {}
-        name = 'visual_' + node.get('name')
+        name = self._get_distinct_name('visual_' + node.get('name'))
         visual_dict['name'] = name
         index = int(node.find('index').text)
         
@@ -538,9 +575,10 @@ class MARSModelParser(RobotModelParser):
         
     def _parse_collision(self, collisions_dict, node, missing_coll_geo):
         '''
+        Parse a collision object.
         '''
         collision_dict = {}
-        name = 'collision_' + node.get('name')
+        name = self._get_distinct_name('collision_' + node.get('name'))
         collision_dict['name'] = name
         index = int(node.find('index').text)        
         
@@ -560,7 +598,9 @@ class MARSModelParser(RobotModelParser):
         
     def _parse_inertial(self, link_dict, node):
         '''
-        pose in inertia does not seem to be available
+        Parse an inertial.
+        
+        Note: Pose in inertia does not seem to be available.
         '''
         inertial_dict = {}
         
@@ -584,18 +624,33 @@ class MARSModelParser(RobotModelParser):
             # inertial pose is always origin for now
             position, rotation = pos_rot_tree_to_lists(None, None)
             inertial_dict['pose'] = calc_pose_formats(position, rotation)
-            inertial_dict['name'] = 'inertial_' + node.get('name')
+            inertial_dict['name'] = self._get_distinct_name('inertial_' + node.get('name'))
             link_dict['inertial'] = inertial_dict
+     
+    def _get_distinct_name(self, name):
+        '''
+        Create a name that has not been used yet in this model.
+        '''
+        if name in self.name_counter_dict:
+            name_counter = self.name_counter_dict[name]
+            distinct_name = name + '_' + str(name_counter)
+            self.name_counter_dict[name] = name_counter + 1
+        else:
+            distinct_name = name
+            self.name_counter_dict[name] = 1
+        return distinct_name
         
     def _parse_links(self, nodes):
         '''
+        Parse the links of the MARS scene.
         '''
         links_dict = {}
         for node in nodes:
             missing_vis_geo = []
             missing_coll_geo = []
             index = int(node.find('index').text)
-            name = node.get('name')
+            name = self._get_distinct_name(node.get('name'))
+                
             self.link_index_dict[index] = name
             
             group = int(node.find('groupid').text)
@@ -609,7 +664,7 @@ class MARSModelParser(RobotModelParser):
             if index in self.link_indices:
                 link_dict = {}
                 
-                link_dict['name'] = node.attrib['name']
+                link_dict['name'] = name
                 
                 pose = self.applied_rel_id_poses[index]['pose']
                 link_dict['pose'] = pose
@@ -624,6 +679,10 @@ class MARSModelParser(RobotModelParser):
                 
                 inertial_dict = self._parse_inertial(link_dict, node)
                 
+                rel_id = node.find('relativeid')
+                if rel_id is not None:
+                    link_dict['parent'] = int(rel_id.text)
+                
                 links_dict[name] = link_dict
                 self.missing_vis_geos[name] = missing_vis_geo
                 self.missing_coll_geos[name] = missing_coll_geo
@@ -633,8 +692,22 @@ class MARSModelParser(RobotModelParser):
                 
         return links_dict
         
+    def _add_parent_links(self, links):
+        '''
+        Replace parent indices with parent names inside the link
+        dictionaries.
+        '''
+        for link_name in links:
+            link = links[link_name]
+            if 'parent' in link:
+                rel_id = link['parent']
+                if rel_id in self.link_index_dict:
+                    link['parent'] = self.link_index_dict[rel_id]
+        
     def _parse_additional_visuals_and_collisions(self, model, nodes):
         '''
+        Parse nodes that are no links as additional visual and collision
+        objects for the already parsed links.
         '''
         for node in nodes:
             index = int(node.find('index').text)
@@ -654,6 +727,7 @@ class MARSModelParser(RobotModelParser):
         
     def _parse_joints(self, joints):
         '''
+        Parse the joints of the MARS scene.
         '''
         joints_dict = {}
         for joint in joints:
@@ -672,9 +746,9 @@ class MARSModelParser(RobotModelParser):
         
     def _apply_relative_ids(self, nodes):
         '''
-        seems to work but not well-tested yet
+        Collect the absolute poses for all nodes.
         '''
-        base_poses = {}     # poses with references already applied plus raw pos and rot values for easier calculations
+        base_poses = {}
         rel_poses = {}
         for node in nodes:
             index = int(node.find('index').text)
