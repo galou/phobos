@@ -188,6 +188,7 @@ class RobotModelParser():
             # 2: move to parents origin by setting the world matrix to the parents world matrix
             childLink.matrix_world = parentLink.matrix_world        # removing this line does not seem to make a difference
             # 3: apply local transform as saved in urdf (change matrix_local from identity to urdf)
+            print(child['pose'])
             location = mathutils.Matrix.Translation(child['pose']['translation'])
             rotation = mathutils.Matrix(child['pose']['matrix']).to_4x4()
             transform_matrix = location * rotation
@@ -378,7 +379,7 @@ class RobotModelParser():
         '''
         Write the robot dictionary to a yaml file in the source file's directory
         '''
-        with open(self.filepath + '_debug.yml', 'w') as outputfile:
+        with open(self.filepath + '_ref_debug.yml', 'w') as outputfile:
             outputfile.write(yaml.dump(self.robot)) #last parameter prevents inline formatting for lists and dictionaries
 
 
