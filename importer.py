@@ -106,6 +106,7 @@ def calc_pose_formats(position, rotation):
     px, py, pz = position
     if len(rotation) == 3:
         rot = mathutils.Euler(rotation).to_quaternion()
+        print(rotation)
     else:
         rot = rotation
     rw, rx, ry, rz = rot
@@ -172,7 +173,7 @@ class RobotModelParser():
         self.robot = {}
 
     def placeChildLinks(self, parent):
-        #print(parent['name']+ ', ', end='')
+        print(parent['name']+ ', ', end='')
         children = []
         for l in self.robot['links']:
             if 'parent' in self.robot['links'][l] and self.robot['links'][l]['parent'] == parent['name']:
@@ -189,9 +190,8 @@ class RobotModelParser():
             # 2: move to parents origin by setting the world matrix to the parents world matrix
             childLink.matrix_world = parentLink.matrix_world        # removing this line does not seem to make a difference
             # 3: apply local transform as saved in urdf (change matrix_local from identity to urdf)
-            print(child['pose'])
             location = mathutils.Matrix.Translation(child['pose']['translation'])
-            rotation = mathutils.Matrix(child['pose']['matrix']).to_4x4()
+            rotation = mathutils.Euler(tuple(child['pose']['rotation_euler']), 'XYZ').to_matrix().to_4x4()
             transform_matrix = location * rotation
             childLink.matrix_local = transform_matrix
             # 4: be happy, as world and basis are now the same and local is the transform to be exported to urdf
@@ -200,48 +200,47 @@ class RobotModelParser():
 
     def placeLinkSubelements(self, link):
         #urdf_sca = #TODO: solve problem with scale
-        # 3.2: make sure to take into account visual information
-        #TODO: also take into account inertial and joint axis (for joint sphere) and collision (bounding box)
+        # 3.2: make sure to take into account visual information #TODO: also take into account inertial and joint axis (for joint sphere) and collision (bounding box)
+        #* urdf_visual_loc * urdf_visual_rot #*urdf_sca
         parentLink = bpy.data.objects[link['name']]
         if 'inertial' in link:
             if 'pose' in link['inertial']:
-                inertial_loc = mathutils.Matrix.Translation(link['inertial']['pose']['translation'])
-                inertial_rot = mathutils.Matrix(link['inertial']['pose']['matrix']).to_4x4()
+                urdf_geom_loc = mathutils.Matrix.Translation(link['inertial']['pose']['translation'])
+                urdf_geom_rot = mathutils.Euler(tuple(link['inertial']['pose']['rotation_euler']), 'XYZ').to_matrix().to_4x4()
             else:
-                inertial_loc = mathutils.Matrix.Identity(4)
-                inertial_rot = mathutils.Matrix.Identity(4)
-            #print(link['name'], link['inertial'])
-            #print(link['inertial']['name'])
-            inertial_name = link['inertial']['name'] #g
-            inertial_obj = bpy.data.objects[inertial_name]
+                urdf_geom_loc = mathutils.Matrix.Identity(4)
+                urdf_geom_rot = mathutils.Matrix.Identity(4)
+            print(link['name'], link['inertial'])
+            print(link['inertial']['name'])
+            geoname = link['inertial']['name'] #g
+            geom = bpy.data.objects[geoname]
             bpy.ops.object.select_all(action="DESELECT")
-            inertial_obj.select = True
+            geom.select = True
             parentLink.select = True
             bpy.context.scene.objects.active = parentLink
             bpy.ops.object.parent_set(type='BONE_RELATIVE')
-            #inertial_obj.matrix_world = parentLink.matrix_world #FIXME: this applies the scale of the parent, making boxes BIIIG
-            inertial_obj.matrix_local = inertial_loc * inertial_rot
+            #geom.matrix_world = parentLink.matrix_world #FIXME: this applies the scale of the parent, making boxes BIIIG
+            geom.matrix_local = urdf_geom_loc * urdf_geom_rot
         for geomsrc in ['visual', 'collision']:
             if geomsrc in link:
                 for g in link[geomsrc]:
-                    vis_coll = link[geomsrc][g]
-                    #print([key for key in geom])
-                    if 'pose' in vis_coll:
-                        #print('geom:', geom)
-                        vis_coll_loc = mathutils.Matrix.Translation(vis_coll['pose']['translation'])
-                        vis_coll_rot = mathutils.Matrix(vis_coll['pose']['matrix']).to_4x4()
+                    geom = link[geomsrc][g]
+                    print([key for key in geom])
+                    if 'pose' in geom:
+                        urdf_geom_loc = mathutils.Matrix.Translation(geom['pose']['translation'])
+                        urdf_geom_rot = mathutils.Euler(tuple(geom['pose']['rotation_euler']), 'XYZ').to_matrix().to_4x4()
                     else:
-                        vis_coll_loc = mathutils.Matrix.Identity(4)
-                        vis_coll_rot = mathutils.Matrix.Identity(4)
-                    vis_coll_name = vis_coll['name'] #g
-                    vis_coll_obj = bpy.data.objects[vis_coll_name]
+                        urdf_geom_loc = mathutils.Matrix.Identity(4)
+                        urdf_geom_rot = mathutils.Matrix.Identity(4)
+                    geoname = geom['name'] #g
+                    geom = bpy.data.objects[geoname]
                     bpy.ops.object.select_all(action="DESELECT")
-                    vis_coll_obj.select = True
+                    geom.select = True
                     parentLink.select = True
                     bpy.context.scene.objects.active = parentLink
                     bpy.ops.object.parent_set(type='BONE_RELATIVE')
-                    vis_coll_obj.matrix_world = parentLink.matrix_world
-                    vis_coll_obj.matrix_local = vis_coll_loc * vis_coll_rot
+                    geom.matrix_world = parentLink.matrix_world
+                    geom.matrix_local = urdf_geom_loc * urdf_geom_rot
 
     def createGeometry(self, viscol, geomsrc):
         newgeom = None
@@ -255,7 +254,6 @@ class RobotModelParser():
                 obj.tag = True
             if geomtype == 'mesh':
                 filetype = geom['filename'].split('.')[-1]
-                #print(geom['filename'])
                 if filetype == 'obj' or filetype == 'OBJ':
                     bpy.ops.import_scene.obj(filepath=os.path.join(self.path, geom['filename']))
                 elif filetype == 'stl' or filetype == 'STL':
@@ -267,10 +265,7 @@ class RobotModelParser():
                 else:
                     print('ERROR: Could not import object.')
                 # find the newly imported obj
-                #print('new object name:', viscol['name'])
-                #print("existing objects' names:")
                 for obj in bpy.data.objects:
-                    #print(obj.name)
                     if not obj.tag:
                         newgeom = obj
                         #with obj file import, blender only turns the object, not the vertices,
@@ -280,7 +275,7 @@ class RobotModelParser():
                             newgeom.select = True
                             bpy.ops.object.transform_apply(rotation=True)
                 newgeom.name = viscol['name']
-                newgeom.layers = defLayers([defs.layerTypes[geomsrc]])
+                #newgeom.layers = defLayers([defs.layerTypes[geomsrc]])
             elif geomtype == 'box':
                 newgeom = createPrimitive(viscol['name'],
                                           geomtype,
@@ -374,6 +369,16 @@ class RobotModelParser():
         for link in self.robot['links']:
             self.placeLinkSubelements(self.robot['links'][link])
         print('Done!')
+
+        for obj in bpy.data.objects:
+            print('name:', obj.name)
+            matrix = obj.matrix_local
+            loc, rot, scale = matrix.decompose()
+            print('rotation:')
+            print('\tx:', rot.x, '\n\ty:', rot.y, '\n\tz:', rot.z, '\n\tw:', rot.w)
+            print('location:')
+            print('\tx:', loc.x, '\n\ty:', loc.y, '\n\tz:', loc.z)
+            print('-------------------')
             
         
     def _debug_output(self):
@@ -382,7 +387,6 @@ class RobotModelParser():
         '''
         with open(self.filepath + '_ref_debug.yml', 'w') as outputfile:
             outputfile.write(yaml.dump(self.robot)) #last parameter prevents inline formatting for lists and dictionaries
-
 
 
 class MARSModelParser(RobotModelParser):
@@ -403,8 +407,7 @@ class MARSModelParser(RobotModelParser):
                 {material index: dictionary containing material information}
             - self.applied_rel_id_poses:
                 {link id: dictionary containing pose with parent pose
-                          applied plus raw pos and rot values for easier
-                          calculations}
+                          applied}
             - self.name_counter_dict:
                 {link/visual/collision/material name:
                  amount of how often the name already has been given to
@@ -414,7 +417,8 @@ class MARSModelParser(RobotModelParser):
         
         self.xml_tree = None
         self.link_index_dict = {}
-        self.link_groups = {}
+        self.link_groups_group_order = {}
+        self.link_groups_link_order = {}
         self.link_indices = set([])
         self.material_indices = {}
         self.vis_coll_groups = {}
@@ -422,6 +426,7 @@ class MARSModelParser(RobotModelParser):
         self.missing_vis_geos = {}
         self.missing_coll_geos = {}
         self.name_counter_dict = {}
+        self.link_group_dict = {}
 
     def parseModel(self):
         '''
@@ -442,31 +447,42 @@ class MARSModelParser(RobotModelParser):
         self._parse_materials(materials)
         
         links = self._parse_links(nodes)
-        self._add_parent_links(links)
+        #self._add_parent_links(links)
         self.robot['links'] = links
         self.robot['joints'] = self._parse_joints(joints)
         self.robot['sensors'] = self._parse_sensors(sensors)
         #self.robot['motors'] = self._parse_motors(motors)
         #self.robot['controllers'] = self._parse_controllers(controllers)
-        self.robot['groups'] = self.link_groups
+        self.robot['groups'] = self.link_groups_group_order
         self._parse_additional_visuals_and_collisions(self.robot, nodes)
         
         for link in self.robot['links']:
             handle_missing_geometry(self.missing_vis_geos[link], self.missing_coll_geos[link], self.robot['links'][link])
         
         self._debug_output()
-        print(self.link)
+        
+        #print(self.link_groups_link_order)
+        #print()
+        #print(self.vis_coll_groups)
+        #print()
+        #print(self.link_index_dict)
+        #print()
+        #print(self.link_indices)
+        
+       # assert False
     
     def _get_links(self, nodes, joints):
         '''
         Collect the indices of all nodes that are links inside
-        'self.link_indices'
+        'self.link_indices'.
         '''
         for joint in joints:
-            parent = int(joint.find('nodeindex1').text)
-            self.link_indices.update([parent])
             child = int(joint.find('nodeindex2').text)
             self.link_indices.update([child])
+        for node in nodes:
+            if node.find('relativeid') is None:
+                self.link_indices.update([int(node.find('index').text)])
+            
         
     def _parse_materials(self, materials_tree):
         '''
@@ -565,7 +581,7 @@ class MARSModelParser(RobotModelParser):
         visual_dict['name'] = name
         index = int(node.find('index').text)
         
-        visual_dict['pose'] = self.applied_rel_id_poses[index]['pose']
+        visual_dict['pose'] = self.applied_rel_id_poses[index]
         
         mat_index = int(node.find('material_id').text)
         visual_dict['material'] = self.material_indices[mat_index]
@@ -584,7 +600,7 @@ class MARSModelParser(RobotModelParser):
         collision_dict['name'] = name
         index = int(node.find('index').text)        
         
-        collision_dict['pose'] = self.applied_rel_id_poses[index]['pose']
+        collision_dict['pose'] = self.applied_rel_id_poses[index]
         
         bitmask = int(float(node.find('coll_bitmask').text))
         collision_dict['bitmask'] = bitmask
@@ -658,65 +674,95 @@ class MARSModelParser(RobotModelParser):
             group = int(node.find('groupid').text)
             node_group_dict = {'name': name,
                                'index': index}
-            if group in self.link_groups:
-                self.link_groups[group].append(node_group_dict)
+            if group in self.link_groups_group_order:
+                self.link_groups_group_order[group].append(node_group_dict)
             else:
-                self.link_groups[group] = [node_group_dict]
-                
+                self.link_groups_group_order[group] = [node_group_dict]
+            
+            rel_id = node.find('relativeid')
             if index in self.link_indices:
                 link_dict = {}
                 
                 link_dict['name'] = name
                 
-                pose = self.applied_rel_id_poses[index]['pose']
+                pose = self.applied_rel_id_poses[index]
                 link_dict['pose'] = pose
                 
                 visuals_dict = {}
-                self._parse_visual(visuals_dict, node, missing_vis_geo)
+                #self._parse_visual(visuals_dict, node, missing_vis_geo)
                 link_dict['visual'] = visuals_dict
                 
                 collisions_dict = {}
-                self._parse_collision(collisions_dict, node, missing_coll_geo)
+                #self._parse_collision(collisions_dict, node, missing_coll_geo)
                 link_dict['collision'] = collisions_dict
                 
                 inertial_dict = self._parse_inertial(link_dict, node)
                 
-                rel_id = node.find('relativeid')
                 if rel_id is not None:
                     link_dict['parent'] = int(rel_id.text)
                 
                 links_dict[name] = link_dict
                 self.missing_vis_geos[name] = missing_vis_geo
                 self.missing_coll_geos[name] = missing_coll_geo
-                
-            else:
-                self.vis_coll_groups[index] = group
-                
+        
+        for group_index in self.link_groups_group_order:
+            group = self.link_groups_group_order[group_index]
+            for node in group:
+                if node['index'] in self.link_indices:
+                    link_index = node['index']
+                    self.link_groups_link_order[link_index] = group
+                    break
+                    
+        for link_index in self.link_groups_link_order:
+            group = self.link_groups_link_order[link_index]
+            for node in group:
+                self.link_group_dict[node['index']] = link_index
+        
+        for link_name in links_dict:
+            link_dict = links_dict[link_name]
+            if 'parent' in link_dict:
+                link_dict['parent'] = self.link_index_dict[self.link_group_dict[link_dict['parent']]]
+        
         return links_dict
         
     def _add_parent_links(self, links):
         '''
-        Replace parent indices with parent names inside the link
+        Replace parent indices (not actually parent indices!) with parent names inside the link
         dictionaries.
+        
+        TODO: There is a better solution, surely.
         '''
         for link_name in links:
             link = links[link_name]
             if 'parent' in link:
                 rel_id = link['parent']
-                if rel_id in self.link_index_dict:
-                    link['parent'] = self.link_index_dict[rel_id]
+                if rel_id in self.vis_coll_groups:
+                    parent_id = self.vis_coll_groups[rel_id]
+                else:
+                    parent_id = rel_id
+                link['parent'] = self.link_index_dict[parent_id]
+                
+                #else:
+                #    print('--------------')
+                #    print('| WTF-ERROR! |')
+                #    print('--------------')
         
     def _parse_additional_visuals_and_collisions(self, model, nodes):
         '''
         Parse nodes that are no links as additional visual and collision
         objects for the already parsed links.
         '''
+        for link in self.link_groups_link_order:
+            for node in self.link_groups_link_order[link]:
+                self.vis_coll_groups[node['index']] = link
+        
         for node in nodes:
             index = int(node.find('index').text)
             if index in self.vis_coll_groups:
-                group = self.link_groups[self.vis_coll_groups[index]]
+                link_index = self.vis_coll_groups[index]
+                group = self.link_groups_link_order[link_index]
                 for group_node in group:
-                    if group_node['index'] in self.link_indices:
+                    if group_node['index'] == link_index:
                         visuals_dict = model['links'][group_node['name']]['visual']
                         self._parse_visual(visuals_dict, node, self.missing_vis_geos[group_node['name']])
                         model['links'][group_node['name']]['visual'] = visuals_dict
@@ -747,52 +793,63 @@ class MARSModelParser(RobotModelParser):
         return joints_dict
         
     def _apply_relative_ids(self, nodes):
-        '''
-        Collect the absolute poses for all nodes.
-        '''
-        base_poses = {}
-        rel_poses = {}
+        absolute_poses = {}
+        link_poses = {}
+        relative_poses = {}
         for node in nodes:
             index = int(node.find('index').text)
             xml_position = node.find('position')
             xml_rotation = node.find('rotation')
             position, rotation = pos_rot_tree_to_lists(xml_position, xml_rotation)
             pose = calc_pose_formats(position, rotation)
-            
-            if node.find('relativeid') is not None:
-                rel_pose_dict = {'pose': pose,
-                                 'rel_id': int(node.find('relativeid').text),
-                                 'raw_pos': position,
-                                 'raw_rot': rotation}
-                rel_poses[index] = rel_pose_dict
+
+            rel_id_xml = node.find('relativeid')
+            if index in self.link_indices:
+                link_poses[index] = pose
+            if rel_id_xml is None:
+                absolute_poses[index] = pose
             else:
-                base_pose_dict = {'pose': pose,
-                                  'raw_pos': position,
-                                  'raw_rot': rotation}
-                base_poses[index] = base_pose_dict
-        num_rel_poses = -1
-        while rel_poses:        
+                rel_id = int(rel_id_xml.text)
+                relative_poses[index] = {'pose': pose, 'rel_id': rel_id}
+
+            num_rel_poses = -1
+        while relative_poses:
             to_delete = []
             # check for infinite loop (happens if referenced node does not exist):
-            if len(rel_poses) == num_rel_poses:        
+            if len(relative_poses) == num_rel_poses:
                 print('Error: non-existant relative id')
                 break
-            num_rel_poses = len(rel_poses)
-            for rel_index in rel_poses:
-                rel_pose = rel_poses[rel_index]
-                base = rel_pose['rel_id']
-                if base in base_poses:
-                    base_pose = base_poses[base]['pose']
-                    rel = rel_pose['pose']
-                    applied_pos = [bp+rp for bp, rp in zip(base_poses[base]['raw_pos'], rel_pose['raw_pos'])]
-                    applied_rot = add_quaternion(base_poses[base]['raw_rot'], rel_pose['raw_rot'])
-                    base_poses[rel_index] = {'pose': calc_pose_formats(applied_pos, applied_rot),
-                                             'raw_pos': applied_pos,
-                                             'raw_rot': applied_rot}
-                    to_delete.append(rel_index)
+            num_rel_poses = len(relative_poses)
+            for index in relative_poses:
+                relative_pose = relative_poses[index]
+                rel_id = relative_pose['rel_id']
+                if rel_id in link_poses or rel_id in absolute_poses:
+                    print('index:', index)
+                    print('rel_id:', rel_id)
+                    if rel_id in link_poses:
+                        reference_pose = link_poses[rel_id]
+                    else:
+                        reference_pose = absolute_poses[rel_id]
+                    rel_matrix = mathutils.Matrix(relative_pose['pose']['matrix']).to_4x4()
+                    ref_matrix = mathutils.Matrix(reference_pose['matrix']).to_4x4()
+                    applied_matrix = ref_matrix * rel_matrix # or the other way round?
+                    print('relative:\n', rel_matrix)
+                    print(rel_matrix.to_quaternion())
+                    print('reference:\n', ref_matrix)
+                    print(ref_matrix.to_quaternion())
+                    print('applied:\n', applied_matrix)
+                    print(applied_matrix.to_quaternion())
+                    loc, rot, scale = applied_matrix.decompose()
+                    applied_pos = [loc.x, loc.y, loc.z]
+                    applied_rot = [rot.w, rot.x, rot.y, rot.z]
+                    absolute_poses[index] = calc_pose_formats(applied_pos, applied_rot)
+                    to_delete.append(index)
             for index in to_delete:
-                del rel_poses[index]
-        self.applied_rel_id_poses = base_poses
+                del relative_poses[index]
+        self.applied_rel_id_poses = absolute_poses
+
+
+
     
     def _parse_sensors(self, sensors):
         '''
@@ -1099,6 +1156,56 @@ class RobotModelImporter(bpy.types.Operator):
 
 # Register and add to the file selector
 bpy.utils.register_class(RobotModelImporter)
+
+
+#def apply_rel_ids_old(self, nodes):
+#    '''
+#    Collect the absolute poses for all nodes.
+
+#   Does not work like that since it calculates poses relative to root,
+#   but may become useful again.
+#    '''
+    #base_poses = {}
+    #rel_poses = {}
+    #for node in nodes:
+    #    index = int(node.find('index').text)
+    #    xml_position = node.find('position')
+    #    xml_rotation = node.find('rotation')
+    #    position, rotation = pos_rot_tree_to_lists(xml_position, xml_rotation)
+    #    pose = calc_pose_formats(position, rotation)
+    #
+    #    if node.find('relativeid') is not None:
+    #        rel_pose_dict = {'pose': pose,
+    #                         'rel_id': int(node.find('relativeid').text)}
+    #        rel_poses[index] = rel_pose_dict
+    #    else:
+    #        base_pose_dict = {'pose': pose}
+    #        base_poses[index] = base_pose_dict
+    #num_rel_poses = -1
+    #while rel_poses:
+    #    to_delete = []
+    #    # check for infinite loop (happens if referenced node does not exist):
+    #    if len(rel_poses) == num_rel_poses:
+    #        print('Error: non-existant relative id')
+    #        break
+    #    num_rel_poses = len(rel_poses)
+    #    for rel_index in rel_poses:
+    #        rel_pose = rel_poses[rel_index]
+    #        base = rel_pose['rel_id']
+    #        if base in base_poses:
+    #            base_pose = base_poses[base]['pose']
+    #            rel = rel_pose['pose']
+    #            base_matrix = mathutils.Matrix(base_pose['matrix']).to_4x4()
+    #            relative_matrix = mathutils.Matrix(rel['matrix']).to_4x4()
+    #            applied_matrix = base_matrix * relative_matrix
+    #            loc, rot, scale = applied_matrix.decompose()
+    #            applied_pos = [loc.x, loc.y, loc.z]
+    #            applied_rot = [rot.w, rot.x, rot.y, rot.z]
+    #            base_poses[rel_index] = {'pose': calc_pose_formats(applied_pos, applied_rot)}
+    #            to_delete.append(rel_index)
+    #    for index in to_delete:
+    #        del rel_poses[index]
+    #self.applied_rel_id_poses = base_poses
 
 
 def main():
