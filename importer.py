@@ -114,14 +114,15 @@ def calc_pose_formats(position, rotation):
     translation = [px, py, pz]
     quaternion = mathutils.Quaternion([rw, rx, ry, rz])
     euler = quaternion.to_euler()
+    print(euler)
     pose_dict['translation'] = translation
     pose_dict['rotation_quaternion'] = [rw, rx, ry, rz]
     pose_dict['rotation_euler'] = [euler.x, euler.y, euler.z]
     rm = quaternion.to_matrix()
-    matrix = [[rm[0][0], rm[1][0], rm[2][0], px],
-              [rm[0][1], rm[1][1], rm[2][1], py],
-              [rm[0][2], rm[1][2], rm[2][2], pz],
-              [0,        0,        0,        1]]
+    matrix = [[rm[0][0], rm[0][1], rm[0][2], px],
+              [rm[1][0], rm[1][1], rm[1][2], py],
+              [rm[2][0], rm[2][1], rm[2][2], pz],
+              [0.0,      0.0,      0.0,      1.0]]
     
     pose_dict['matrix'] = matrix
     
