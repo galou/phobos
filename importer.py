@@ -442,8 +442,9 @@ class MARSModelParser(RobotModelParser):
         controllers = root.find('controllerlist')
         materials = root.find('materiallist')
         
-        self._apply_relative_ids(nodes)
         self._get_links(nodes, joints)
+        self._apply_relative_ids(nodes)
+
         self._parse_materials(materials)
         
         links = self._parse_links(nodes)
@@ -804,10 +805,11 @@ class MARSModelParser(RobotModelParser):
             pose = calc_pose_formats(position, rotation)
 
             rel_id_xml = node.find('relativeid')
-            if index in self.link_indices:
-                link_poses[index] = pose
+            #if index in self.link_indices:
+            #    link_poses[index] = pose
             if rel_id_xml is None:
                 absolute_poses[index] = pose
+                root = index
             else:
                 rel_id = int(rel_id_xml.text)
                 relative_poses[index] = {'pose': pose, 'rel_id': rel_id}
@@ -821,28 +823,29 @@ class MARSModelParser(RobotModelParser):
                 break
             num_rel_poses = len(relative_poses)
             for index in relative_poses:
+                #print('link_poses:', link_poses)
                 relative_pose = relative_poses[index]
                 rel_id = relative_pose['rel_id']
                 if rel_id in link_poses or rel_id in absolute_poses:
-                    print('index:', index)
-                    print('rel_id:', rel_id)
-                    if rel_id in link_poses:
-                        reference_pose = link_poses[rel_id]
+                    #print('index:', index)
+                    #print('rel_id:', rel_id)
+                    if rel_id in self.link_indices and rel_id is not root:
+                        absolute_poses[index] = relative_pose['pose']
                     else:
                         reference_pose = absolute_poses[rel_id]
-                    rel_matrix = mathutils.Matrix(relative_pose['pose']['matrix']).to_4x4()
-                    ref_matrix = mathutils.Matrix(reference_pose['matrix']).to_4x4()
-                    applied_matrix = ref_matrix * rel_matrix # or the other way round?
-                    print('relative:\n', rel_matrix)
-                    print(rel_matrix.to_quaternion())
-                    print('reference:\n', ref_matrix)
-                    print(ref_matrix.to_quaternion())
-                    print('applied:\n', applied_matrix)
-                    print(applied_matrix.to_quaternion())
-                    loc, rot, scale = applied_matrix.decompose()
-                    applied_pos = [loc.x, loc.y, loc.z]
-                    applied_rot = [rot.w, rot.x, rot.y, rot.z]
-                    absolute_poses[index] = calc_pose_formats(applied_pos, applied_rot)
+                        rel_matrix = mathutils.Matrix(relative_pose['pose']['matrix']).to_4x4()
+                        ref_matrix = mathutils.Matrix(reference_pose['matrix']).to_4x4()
+                        applied_matrix = ref_matrix * rel_matrix # or the other way round?
+                        #print('relative:\n', rel_matrix)
+                        #print(rel_matrix.to_quaternion())
+                        #print('reference:\n', ref_matrix)
+                        #print(ref_matrix.to_quaternion())
+                        #print('applied:\n', applied_matrix)
+                        #print(applied_matrix.to_quaternion())
+                        loc, rot, scale = applied_matrix.decompose()
+                        applied_pos = [loc.x, loc.y, loc.z]
+                        applied_rot = [rot.w, rot.x, rot.y, rot.z]
+                        absolute_poses[index] = calc_pose_formats(applied_pos, applied_rot)
                     to_delete.append(index)
             for index in to_delete:
                 del relative_poses[index]
