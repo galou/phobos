@@ -427,6 +427,7 @@ class MARSModelParser(RobotModelParser):
         self.missing_coll_geos = {}
         self.name_counter_dict = {}
         self.link_group_dict = {}
+        self.robot_states = {}
 
     def parseModel(self):
         '''
@@ -459,7 +460,9 @@ class MARSModelParser(RobotModelParser):
         
         for link in self.robot['links']:
             handle_missing_geometry(self.missing_vis_geos[link], self.missing_coll_geos[link], self.robot['links'][link])
-        
+
+        self.robot['states'] = self.robot_states
+
         self._debug_output()
         
         #print(self.link_groups_link_order)
@@ -779,6 +782,7 @@ class MARSModelParser(RobotModelParser):
         Parse the joints of the MARS scene.
         '''
         joints_dict = {}
+        state_dict = {}
         for joint in joints:
             joint_dict = {}
             name = joint.get('name')
@@ -791,8 +795,17 @@ class MARSModelParser(RobotModelParser):
             joint_dict['child'] = self.link_index_dict[child_index]
             
             joints_dict[name] = joint_dict
+
+            xml_offset = joint.find('angle1_offset')
+            if xml_offset is not None:
+                state_dict[name] = float(xml_offset.text)
+            else:
+                state_dict[name] = 0.0
+
+        self.robot_states['start'] = state_dict
         return joints_dict
-        
+
+
     def _apply_relative_ids(self, nodes):
         absolute_poses = {}
         link_poses = {}
