@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>phobos io module &#8212; Phobos 2.0.0 (4e37f7f) documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="_static/classic.css?v=2bf1fcf8" />
+    
+    <script src="_static/documentation_options.js?v=b4864922"></script>
+    <script src="_static/doctools.js?v=9bcbadda"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="phobos core package" href="phobos.core.html" />
+    <link rel="prev" title="phobos.blender.utils package" href="phobos.blender.utils.html" /> 
+  </head><body>
+    <div class="related" role="navigation" aria-label="Related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="right" >
+          <a href="phobos.core.html" title="phobos core package"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="phobos.blender.utils.html" title="phobos.blender.utils package"
+             accesskey="P">previous</a> |</li>
+        <li class="nav-item nav-item-0"><a href="index.html">Phobos 2.0.0 (4e37f7f) documentation</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">phobos io module</a></li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="phobos-io-module">
+<h1>phobos io module<a class="headerlink" href="#phobos-io-module" title="Link to this heading">¶</a></h1>
+<p>The io module of phobos takes care of dealing with several model formats:
+- SMURF (YAML)
+- URDF (XML)
+- SDF (XML)
+- (more are under development)</p>
+<p>This is the backend to phobos.core.Robot.</p>
+<p>While “base”, “xml_factory”, “yaml_reflection”, “smurf_reflection” provide the basic classes for the formats, further
+files (“representation”, “sensor_representations”, “poses”, “hyrodyn”) define the basic representation classes for all
+robot’s entities.
+“parser” holds the code to parse xml-files to the Robot class.
+“xmlrobot” and “smurfrobot” define the basic classes for robots in URDF/SDF respectively smurf format; they hold all the
+information models in the respective formats can hold.</p>
+<section id="representation">
+<h2>Representation<a class="headerlink" href="#representation" title="Link to this heading">¶</a></h2>
+<p>Nearly all representation classes base on the Linkable class.
+As python offers no direct access to memory management things like shared pointers can’t directly be used.
+To be memory-efficient and efficient regarding changing of existing instances.
+The robot representations hold the instances of representations like Links, Joints, Materials, Submechanisms etc.
+Those refer to other instances internally (e.g. a Joint holds a reference to the parent link and a child link) by name.
+When ever we change e.g. a link name it would be necessary to go through all other instances to check whether the reference has be updated as well.</p>
+<p>The Linkable class no allows to link instance with a robot instance.
+Whenever we link an instance to a robot all its references to other linkables are replaced by a python-reference.
+This way an update (change of properties) of an instance takes effect every where where it’s referenced.
+Unlinking replaces this python-reference again by the string-type name, hence we’d have to take care of the properties again manually.</p>
+<p>It is therefore necessary that all Linkables have a unique name inside a robot.
+When the unique identifyer is needed, make sure to use str() on the object, that way you’ll get the unique name, no matter if its currently linked to a robot or not. (See __str__() of Linkables)</p>
+<section id="xml-representation">
+<h3>XML-Representation<a class="headerlink" href="#xml-representation" title="Link to this heading">¶</a></h3>
+<p>To represent XML-robot-formats like SDF and URDF, we defined the format in a separate JSON file in data/xml_formats.json.
+This file defines for each format for each class in io.representation and sensor.representation which properties are
+read/written from/to the XML-file.
+For each class the following properties are defined therefore:
+- attributes: define the xml attributes of the element
+- children: child-elements that are classes there-selves keyed by there xml tag
+- attribute_children: are properties that are stored as attributes of a child-element with a defined tag
+- value_children: are properties that are stored as text of child-elements with a defined tag</p>
+<p>XMLDefinition class provides access to these definitions and takes care of the (de-)serialization.
+XMLFactory associates each io.representation class with its corresponding XMLDefinition.
+By using class_factory() on all io.representation classes in io.__init__.py this association is performed and each class
+is extended with methods to serialize to and from xml and all available xml-dialects (URDF etc.).</p>
+<p>As sensor elements in URDF and SDF are a bit more complex, an SensorFactory class was necessary to parse and write the Sensors to those formats.</p>
+<p>io.xmlrobot fuses all this to the pure representation of URDF and SDF.</p>
+</section>
+<section id="smurf-representation">
+<h3>SMURF-Representation<a class="headerlink" href="#smurf-representation" title="Link to this heading">¶</a></h3>
+<p>The SMURF representation happens by inheritance of the SMURFReflection class.
+It defines which properties will be exported using <cite>returns</cite> and <cite>excludes</cite>.</p>
+</section>
+</section>
+<section id="submodules">
+<h2>Submodules<a class="headerlink" href="#submodules" title="Link to this heading">¶</a></h2>
+<section id="phobos-io-base-module">
+<h3>phobos.io.base module<a class="headerlink" href="#phobos-io-base-module" title="Link to this heading">¶</a></h3>
+</section>
+<section id="phobos-io-xml-factory-module">
+<h3>phobos.io.xml_factory module<a class="headerlink" href="#phobos-io-xml-factory-module" title="Link to this heading">¶</a></h3>
+<p>xml_factory depends on data/xml_formats.json. This file defines how XML formats like URDF and SDF are defined, and where
+to obtain the corresponding information.</p>
+</section>
+<section id="phobos-io-yaml-reflection-module">
+<h3>phobos.io.yaml_reflection module<a class="headerlink" href="#phobos-io-yaml-reflection-module" title="Link to this heading">¶</a></h3>
+</section>
+<section id="phobos-io-smurf-reflection-module">
+<h3>phobos.io.smurf_reflection module<a class="headerlink" href="#phobos-io-smurf-reflection-module" title="Link to this heading">¶</a></h3>
+</section>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+  <div>
+    <h3><a href="index.html">Table of Contents</a></h3>
+    <ul>
+<li><a class="reference internal" href="#">phobos io module</a><ul>
+<li><a class="reference internal" href="#representation">Representation</a><ul>
+<li><a class="reference internal" href="#xml-representation">XML-Representation</a></li>
+<li><a class="reference internal" href="#smurf-representation">SMURF-Representation</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#submodules">Submodules</a><ul>
+<li><a class="reference internal" href="#phobos-io-base-module">phobos.io.base module</a></li>
+<li><a class="reference internal" href="#phobos-io-xml-factory-module">phobos.io.xml_factory module</a></li>
+<li><a class="reference internal" href="#phobos-io-yaml-reflection-module">phobos.io.yaml_reflection module</a></li>
+<li><a class="reference internal" href="#phobos-io-smurf-reflection-module">phobos.io.smurf_reflection module</a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+
+  </div>
+  <div>
+    <h4>Previous topic</h4>
+    <p class="topless"><a href="phobos.blender.utils.html"
+                          title="previous chapter">phobos.blender.utils package</a></p>
+  </div>
+  <div>
+    <h4>Next topic</h4>
+    <p class="topless"><a href="phobos.core.html"
+                          title="next chapter">phobos core package</a></p>
+  </div>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="_sources/phobos.io.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<search id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="Related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="right" >
+          <a href="phobos.core.html" title="phobos core package"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="phobos.blender.utils.html" title="phobos.blender.utils package"
+             >previous</a> |</li>
+        <li class="nav-item nav-item-0"><a href="index.html">Phobos 2.0.0 (4e37f7f) documentation</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">phobos io module</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2014-2022, DFKI GmbH and University of Bremen.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.1.3.
+    </div>
+  </body>
+</html>
